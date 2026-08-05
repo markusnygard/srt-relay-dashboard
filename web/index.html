@@ -290,18 +290,26 @@ function renderUsers(){
   el("userRows").innerHTML = users.map(u=>`
     <tr>
       <td><b>${escapeHtml(u.user)}</b></td>
-      <td><div class="pass-cell"><span class="pw" data-user="${escapeHtml(u.user)}">••••••</span>
-        <button class="eye" onclick="togglePw('${escapeHtml(u.user)}')">👁</button></div></td>
+      <td><span class="pw">••••••</span></td>
       <td>${escapeHtml(u.role||"admin")}</td>
-      <td style="text-align:right"><button class="ghost danger" onclick="removeUser('${escapeHtml(u.user)}')">🗑</button></td>
+      <td style="text-align:right">
+        <button class="ghost" onclick="resetPw('${escapeHtml(u.user)}')">🔑</button>
+        <button class="ghost danger" onclick="removeUser('${escapeHtml(u.user)}')">🗑</button>
+      </td>
     </tr>`).join("");
 }
 
-function togglePw(user){
-  const span = document.querySelector(`.pw[data-user="${CSS.escape(user)}"]`);
-  if(!span) return;
-  const u = users.find(x=>x.user===user);
-  span.textContent = span.textContent === "••••••" ? (u.pass||"") : "••••••";
+async function resetPw(user){
+  const p = prompt("New password for "+user+":");
+  if(p === null || p === "") return;
+  try {
+    users = await api("/api/users/"+encodeURIComponent(user)+"/password", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({pass: p})
+    });
+    renderUsers();
+  } catch(e){ alert(e.message); }
 }
 
 async function addUser(){

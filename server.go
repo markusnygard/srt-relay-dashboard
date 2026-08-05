@@ -220,13 +220,47 @@ func (s *server) handleAddUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user and pass required", http.StatusBadRequest)
 		return
 	}
-	if err := s.auth.addUser(req.User, req.Pass); err != nil {
-		ae, ok := err.(*apiError)
-		if ok {
+	err := s.auth.addUser(req.User, req.Pass)
+	if ae, ok := err.(*apiError); ok && ae.code == http.StatusConflict {
+		// User exists: treat as password change.
+		if err := s.auth.setPassword(req.User, req.Pass); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else if err != nil {
+		http.Error(w, "failed to add user", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.auth.listUsers())
+}
+
+func (s *server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	user = strings.TrimSuffix(user, "/password")
+	if user == "" {
+		http.Error(w, "user required", http.StatusBadRequest)
+		return
+	}
+	var req addUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Pass == "" {
+		http.Error(w, "pass required", http.StatusBadRequest)
+		return
+	}
+	if err := s.auth.setPassword(user, req.Pass); err != nil {
+		if ae, ok := err.(*apiError); ok {
 			http.Error(w, ae.msg, ae.code)
 			return
 		}
-		http.Error(w, "failed to add user", http.StatusInternalServerError)
+		http.Error(w, "failed to set password", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -256,6 +290,16 @@ func (s *server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.auth.listUsers())
 }
 
+func (s *server) handleUserPath(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	switch {
+	case strings.HasSuffix(path, "/password"):
+		s.handleSetPassword(w, r)
+	default:
+		s.handleRemoveUser(w, r)
+	}
+}
+
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/login", s.handleLogin)
@@ -263,7 +307,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/me", s.auth.requireAuth(s.handleMe))
 	mux.HandleFunc("/api/users", s.auth.requireAuth(s.handleListUsers))
 	mux.HandleFunc("/api/users/add", s.auth.requireAuth(s.handleAddUser))
-	mux.HandleFunc("/api/users/", s.auth.requireAuth(s.handleRemoveUser))
+	mux.HandleFunc("/api/users/", s.auth.requireAuth(s.handleUserPath))
 	mux.HandleFunc("/api/config", s.auth.requireAuth(s.handleConfig))
 	mux.HandleFunc("/api/streams", s.auth.requireAuth(s.handleListStreams))
 	mux.HandleFunc("/api/streams/add", s.auth.requireAuth(s.handleAddStream))

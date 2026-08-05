@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/haivision/srtgo v0.0.0-20260729205614-11f07ff45f44
+	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
 )
 
