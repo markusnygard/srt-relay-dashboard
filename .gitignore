@@ -1,0 +1,14 @@
+# Go build output
+/srt-relay-app
+srt-relay-app.exe
+
+# Local runtime data
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
