@@ -25,15 +25,17 @@ type server struct {
 	portLow      int
 	portHigh     int
 	egressOffset int
+	publicHost   string
 }
 
-func newServer(r *relay.Relay, portLow, portHigh, egressOffset int) *server {
+func newServer(r *relay.Relay, portLow, portHigh, egressOffset int, publicHost string) *server {
 	s := &server{
 		relay:        r,
 		clients:      make(map[*websocket.Conn]bool),
 		portLow:      portLow,
 		portHigh:     portHigh,
 		egressOffset: egressOffset,
+		publicHost:   publicHost,
 	}
 	r.SetOnChange(s.broadcast)
 	return s
@@ -139,8 +141,19 @@ func (s *server) handleFreePorts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(free)
 }
 
+func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"host":         s.publicHost,
+		"portLow":      s.portLow,
+		"portHigh":     s.portHigh,
+		"egressOffset": s.egressOffset,
+	})
+}
+
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/streams", s.handleListStreams)
 	mux.HandleFunc("/api/streams/add", s.handleAddStream)
 	mux.HandleFunc("/api/streams/", s.handleRemoveStream)
@@ -163,8 +176,8 @@ func generateStreamID(name string) string {
 	return clean
 }
 
-func startServer(r *relay.Relay, addr string, portLow, portHigh, egressOffset int) {
-	s := newServer(r, portLow, portHigh, egressOffset)
+func startServer(r *relay.Relay, addr string, portLow, portHigh, egressOffset int, publicHost string) {
+	s := newServer(r, portLow, portHigh, egressOffset, publicHost)
 	log.Printf("web ui on http://%s", addr)
 	log.Fatal(http.ListenAndServe(addr, s.routes()))
 }

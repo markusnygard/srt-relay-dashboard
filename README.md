@@ -128,6 +128,7 @@ export LD_LIBRARY_PATH=$(pwd)
 | `--port-low` | `21001` | lowest available ingress port |
 | `--port-high` | `21100` | highest available ingress port |
 | `--egress-offset` | `100` | egress port = ingress + offset |
+| `--host-ip` | auto | IP shown to senders/receivers in the web UI (auto-detected if empty; set it if the relay is behind NAT or has multiple NICs) |
 
 ## HTTP API
 

@@ -73,6 +73,13 @@
 <script>
 let HOST = location.hostname || "localhost";
 
+async function loadConfig(){
+  try {
+    const cfg = await api("/api/config");
+    if (cfg && cfg.host) HOST = cfg.host;
+  } catch (e) { /* fall back to location.hostname */ }
+}
+
 function el(id){ return document.getElementById(id); }
 function healthDot(h){
   const cls = ["green","yellow","red","gray"].includes(h) ? h : "gray";
@@ -195,6 +202,7 @@ function connectWS(){
   ws.onclose = ()=>{ setTimeout(connectWS, 3000); };
 }
 
+loadConfig();
 loadPorts();
 refresh();
 connectWS();
