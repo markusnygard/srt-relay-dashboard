@@ -9,6 +9,8 @@ Built for the scenario where a relay server with a fixed public IP sits between
 two NAT'd machines (senders and receivers behind firewalls that only allow
 outbound traffic).
 
+![SRT Relay Dashboard](srt-relay-dashboard.png)
+
 ## Highlights
 
 - **Per-port relay**: each stream = one ingress/egress port pair. Because the
