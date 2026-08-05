@@ -62,10 +62,23 @@ By default the egress port = ingress port + 100 (`--egress-offset`):
 2. Put both in the same folder on the server and run:
 
 ```bash
+cd ~
+mkdir -p srt-relay && cd srt-relay
+wget https://github.com/markusnygard/srt-relay-dashboard/releases/download/v0.1.0/srt-relay-dashboard-linux-amd64
+wget https://github.com/markusnygard/srt-relay-dashboard/releases/download/v0.1.0/libsrt.so.1.5.6
 chmod +x srt-relay-dashboard-linux-amd64
+```
+
+3. Run the relay:
+
+```bash
 export LD_LIBRARY_PATH=$(pwd)
 ./srt-relay-dashboard-linux-amd64 --http 0.0.0.0:8080
 ```
+
+> Note: the binary needs the matching `libsrt` shared library at runtime.
+> Keep `libsrt.so.1.5.6` next to it and set `LD_LIBRARY_PATH=$(pwd)` (or run
+> the Docker image, which bundles everything).
 
 ### Option A: Docker image
 
