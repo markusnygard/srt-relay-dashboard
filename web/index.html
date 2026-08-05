@@ -127,8 +127,8 @@ async function removeStream(id){
   renderAll();
 }
 
-function srtUrl(port){
-  return `srt://${HOST}:${port}`;
+function srtUrl(port, action, streamId){
+  return `srt://${HOST}:${port}?mode=caller&streamid=${action}:${streamId}`;
 }
 
 function render(st){
@@ -140,8 +140,8 @@ function render(st){
     <td>${dot}</td>
     <td><b>${escapeHtml(st.name)}</b><br><span class="state">${st.state}</span></td>
     <td><code>${escapeHtml(st.streamId)}</code></td>
-    <td><a href="#" onclick="return false;" title="${srtUrl(st.inPort)}">${srtUrl(st.inPort)}</a></td>
-    <td><a href="#" onclick="return false;" title="${srtUrl(st.outPort)}">${srtUrl(st.outPort)}</a></td>
+    <td><a href="#" onclick="return false;" title="${srtUrl(st.inPort,'publish',st.streamId)}">${srtUrl(st.inPort,'publish',st.streamId)}</a></td>
+    <td><a href="#" onclick="return false;" title="${srtUrl(st.outPort,'read',st.streamId)}">${srtUrl(st.outPort,'read',st.streamId)}</a></td>
     <td>${codecs||"—"}</td>
     <td>${bitrate}</td>
     <td>
@@ -163,8 +163,8 @@ function showDetails(id){
     ["State", st.state],
     ["Ingress port (sender)", st.inPort],
     ["Egress port (receiver)", st.outPort],
-    ["Sender OBS server", srtUrl(st.inPort)],
-    ["Receiver OBS input", srtUrl(st.outPort)],
+    ["Sender OBS server", srtUrl(st.inPort,"publish",st.streamId)],
+    ["Receiver OBS input", srtUrl(st.outPort,"read",st.streamId)],
     ["Video codec", (st.codecs||[]).find(c=>c.type==="video")?.name || "—"],
     ["Audio codec", (st.codecs||[]).find(c=>c.type==="audio")?.name || "—"],
     ["Bitrate", s.bitrateKbps>0 ? (s.bitrateKbps/1000).toFixed(2)+" Mbps" : "—"],

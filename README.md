@@ -112,8 +112,10 @@ export LD_LIBRARY_PATH=$(pwd)
 2. Type a stream name and pick a free ingress port from the dropdown.
 3. The dashboard shows the exact URLs to put in OBS:
 
-   - **Sender OBS** → Settings → Stream → Custom → Server: `srt://SERVER:IN_PORT` (Stream Key empty)
-   - **Receiver OBS** → add Media Source → Input: `srt://SERVER:OUT_PORT` → Input Format: `mpegts`
+   - **Sender OBS** → Settings → Stream → Custom → Server: `srt://SERVER:IN_PORT?mode=caller&streamid=publish:STREAMID` (Stream Key empty)
+   - **Receiver OBS** → add Media Source → Input: `srt://SERVER:OUT_PORT?mode=caller&streamid=read:STREAMID` → Input Format: `mpegts`
+
+   The dashboard shows these complete URLs for each stream; just copy them.
 
 4. The stream row turns **relaying** and shows bitrate/codecs/health once both
    sides connect.
