@@ -55,6 +55,18 @@ By default the egress port = ingress port + 100 (`--egress-offset`):
 
 ## Quick start
 
+### Easiest: download a release binary (Linux)
+
+1. Grab the latest Linux binary + `libsrt.so.1.5.6` from the
+   [Releases](https://github.com/markusnygard/srt-relay-dashboard/releases) page.
+2. Put both in the same folder on the server and run:
+
+```bash
+chmod +x srt-relay-dashboard-linux-amd64
+export LD_LIBRARY_PATH=$(pwd)
+./srt-relay-dashboard-linux-amd64 --http 0.0.0.0:8080
+```
+
 ### Option A: Docker image
 
 ```bash
@@ -122,6 +134,14 @@ export LD_LIBRARY_PATH=$(pwd)
 | 🟡 yellow | rising jitter / loss 0.1–1% / bitrate dipping |
 | 🔴 red   | no traffic, loss > 1%, or buffer delay > 1000 ms |
 | ⚪ gray  | no connection yet |
+
+## Platform support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Linux   | ✅ supported | primary target; single static-ish binary + `libsrt.so` |
+| macOS   | ✅ supported | build with `./build.sh darwin` |
+| Windows | ⚠️ not recommended | `srtgo` (the Go SRT binding) crashes under cgo on Windows (`0x406d1388` in `srt_startup`) — a binding/toolchain issue, not this app. Use Linux or macOS, or run the Docker image. |
 
 ## License
 

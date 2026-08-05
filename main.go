@@ -16,13 +16,16 @@ func main() {
 	egressOffset := flag.Int("egress-offset", 100, "egress port = ingress + offset")
 	flag.Parse()
 
-	r := relay.New(*host, *latency, nil)
-	defer relay.CleanupSRT()
-
-	// Start with no streams; streams are added via the web UI.
 	log.Printf("srt-relay-app starting: http=%s srt host=%s latency=%dms ports=%d-%d egress+%d",
 		*httpAddr, *host, *latency, *portLow, *portHigh, *egressOffset)
 
+	log.Printf("initializing SRT...")
+	r := relay.New(*host, *latency, nil)
+	log.Printf("SRT initialized")
+	defer relay.CleanupSRT()
+
+	// Start with no streams; streams are added via the web UI.
+	log.Printf("starting web server on %s", *httpAddr)
 	startServer(r, *httpAddr, *portLow, *portHigh, *egressOffset)
 }
 
