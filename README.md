@@ -146,8 +146,9 @@ The web UI requires a login (all users have admin role). On first run a
 - **password:** `admin`
 
 Change it immediately after first login via the **Users** button in the top
-right of the dashboard: add new users, delete users, and reveal passwords with
-the eye icon.
+right of the dashboard: add new users, delete users, and reset passwords
+(🔑). Passwords are stored **hashed (bcrypt)** and are never returned by the
+API; the list shows a masked value.
 
 ## HTTP API
 
