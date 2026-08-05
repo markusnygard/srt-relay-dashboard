@@ -73,8 +73,11 @@ chmod +x srt-relay-dashboard-linux-amd64
 
 ```bash
 export LD_LIBRARY_PATH=$(pwd)
-./srt-relay-dashboard-linux-amd64 --http 0.0.0.0:8080
+./srt-relay-dashboard-linux-amd64 --http 0.0.0.0:3001
 ```
+
+4. Open `http://SERVER:3001` and sign in with the default `admin` / `admin`
+   credentials.
 
 > Note: the binary needs the matching `libsrt` shared library at runtime.
 > Keep `libsrt.so.1.5.6` next to it and set `LD_LIBRARY_PATH=$(pwd)` (or run
@@ -85,10 +88,11 @@ export LD_LIBRARY_PATH=$(pwd)
 ```bash
 docker build -t srt-relay-dashboard .
 docker run --rm -d \
-  -p 8080:8080 \
+  -p 3001:3001 \
   -p 23001-23100:23001-23100/udp \
+  -v $(pwd)/users.json:/users.json \
   srt-relay-dashboard \
-  --http 0.0.0.0:8080
+  --http 0.0.0.0:3001 --users /users.json
 ```
 
 ### Option B: Standalone binary (recommended for the relay server)
@@ -108,7 +112,7 @@ export LD_LIBRARY_PATH=$(pwd)
 
 ### Using the dashboard
 
-1. Open `http://SERVER:8080`.
+1. Open `http://SERVER:3001` and sign in (`admin` / `admin`).
 2. Type a stream name and pick a free ingress port from the dropdown.
 3. The dashboard shows the exact URLs to put in OBS:
 
@@ -124,20 +128,43 @@ export LD_LIBRARY_PATH=$(pwd)
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--http` | `0.0.0.0:8080` | web UI listen address |
+| `--http` | `0.0.0.0:3001` | web UI listen address |
 | `--host` | `0.0.0.0` | SRT bind host |
 | `--latency` | `1000` | SRT latency in ms (raise for lossy links) |
 | `--port-low` | `21001` | lowest available ingress port |
 | `--port-high` | `21100` | highest available ingress port |
 | `--egress-offset` | `100` | egress port = ingress + offset |
 | `--host-ip` | auto | IP shown to senders/receivers in the web UI (auto-detected if empty; set it if the relay is behind NAT or has multiple NICs) |
+| `--users` | `users.json` | path to the users file (created with `admin/admin` on first run) |
+
+## Authentication
+
+The web UI requires a login (all users have admin role). On first run a
+`users.json` file is created with the default credentials:
+
+- **username:** `admin`
+- **password:** `admin`
+
+Change it immediately after first login via the **Users** button in the top
+right of the dashboard: add new users, delete users, and reveal passwords with
+the eye icon.
 
 ## HTTP API
 
+All endpoints except `POST /api/login` require a session cookie (obtained from
+login). `POST /api/logout` is also public so a client can always sign out.
+
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/api/login` | `{"user": "...", "pass": "..."}` — sets session cookie |
+| POST | `/api/logout` | clears the session |
+| GET  | `/api/me`       | current user |
+| GET  | `/api/users`    | list users |
+| POST | `/api/users/add` | `{"user": "...", "pass": "..."}` |
+| DELETE | `/api/users/{user}` | remove a user |
+| GET  | `/api/config`   | host / port ranges |
 | GET  | `/api/streams`       | list streams with stats |
-| POST | `/api/streams/add`   | `{"name": "...", "inPort": 23001}` |
+| POST | `/api/streams/add`   | `{"name": "...", "inPort": 21001}` |
 | DELETE | `/api/streams/{id}` | remove a stream |
 | GET  | `/api/ports/free`    | list free ingress ports |
 | WS   | `/ws`                | live stream updates |

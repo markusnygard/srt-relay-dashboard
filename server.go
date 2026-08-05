@@ -20,6 +20,7 @@ var webFS embed.FS
 
 type server struct {
 	relay        *relay.Relay
+	auth         *authManager
 	mu           sync.Mutex
 	clients      map[*websocket.Conn]bool
 	portLow      int
@@ -28,9 +29,10 @@ type server struct {
 	publicHost   string
 }
 
-func newServer(r *relay.Relay, portLow, portHigh, egressOffset int, publicHost string) *server {
+func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, publicHost string) *server {
 	s := &server{
 		relay:        r,
+		auth:         auth,
 		clients:      make(map[*websocket.Conn]bool),
 		portLow:      portLow,
 		portHigh:     portHigh,
@@ -151,14 +153,123 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- authentication handlers ---
+
+type loginRequest struct {
+	User string `json:"user"`
+	Pass string `json:"pass"`
+}
+
+func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !s.auth.authenticate(req.User, req.Pass) {
+		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+		return
+	}
+	token := s.auth.createSession(req.User)
+	s.auth.setSessionCookie(w, token)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"user": req.User, "role": "admin"})
+}
+
+func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if tok := s.auth.sessionFromRequest(r); tok != "" {
+		s.auth.destroySession(tok)
+	}
+	s.auth.clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
+	username := r.Context().Value(ctxUser).(string)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"user": username, "role": "admin"})
+}
+
+// --- user management ---
+
+type addUserRequest struct {
+	User string `json:"user"`
+	Pass string `json:"pass"`
+}
+
+func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.auth.listUsers())
+}
+
+func (s *server) handleAddUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req addUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.User == "" || req.Pass == "" {
+		http.Error(w, "user and pass required", http.StatusBadRequest)
+		return
+	}
+	if err := s.auth.addUser(req.User, req.Pass); err != nil {
+		ae, ok := err.(*apiError)
+		if ok {
+			http.Error(w, ae.msg, ae.code)
+			return
+		}
+		http.Error(w, "failed to add user", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.auth.listUsers())
+}
+
+func (s *server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	if user == "" {
+		http.Error(w, "user required", http.StatusBadRequest)
+		return
+	}
+	if err := s.auth.removeUser(user); err != nil {
+		ae, ok := err.(*apiError)
+		if ok {
+			http.Error(w, ae.msg, ae.code)
+			return
+		}
+		http.Error(w, "failed to remove user", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.auth.listUsers())
+}
+
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/streams", s.handleListStreams)
-	mux.HandleFunc("/api/streams/add", s.handleAddStream)
-	mux.HandleFunc("/api/streams/", s.handleRemoveStream)
-	mux.HandleFunc("/api/ports/free", s.handleFreePorts)
-	mux.Handle("/ws", websocket.Handler(s.handleWS))
+	mux.HandleFunc("/api/login", s.handleLogin)
+	mux.HandleFunc("/api/logout", s.auth.requireAuth(s.handleLogout))
+	mux.HandleFunc("/api/me", s.auth.requireAuth(s.handleMe))
+	mux.HandleFunc("/api/users", s.auth.requireAuth(s.handleListUsers))
+	mux.HandleFunc("/api/users/add", s.auth.requireAuth(s.handleAddUser))
+	mux.HandleFunc("/api/users/", s.auth.requireAuth(s.handleRemoveUser))
+	mux.HandleFunc("/api/config", s.auth.requireAuth(s.handleConfig))
+	mux.HandleFunc("/api/streams", s.auth.requireAuth(s.handleListStreams))
+	mux.HandleFunc("/api/streams/add", s.auth.requireAuth(s.handleAddStream))
+	mux.HandleFunc("/api/streams/", s.auth.requireAuth(s.handleRemoveStream))
+	mux.HandleFunc("/api/ports/free", s.auth.requireAuth(s.handleFreePorts))
+	mux.Handle("/ws", s.auth.requireWS(s.handleWS))
 
 	sub, _ := fs.Sub(webFS, "web")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
@@ -176,8 +287,8 @@ func generateStreamID(name string) string {
 	return clean
 }
 
-func startServer(r *relay.Relay, addr string, portLow, portHigh, egressOffset int, publicHost string) {
-	s := newServer(r, portLow, portHigh, egressOffset, publicHost)
+func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, publicHost string) {
+	s := newServer(r, auth, portLow, portHigh, egressOffset, publicHost)
 	log.Printf("web ui on http://%s", addr)
 	log.Fatal(http.ListenAndServe(addr, s.routes()))
 }

@@ -8,13 +8,20 @@
   :root { --bg:#0f1115; --card:#161a22; --border:#262c38; --text:#e6e9ef; --muted:#8a93a6;
           --green:#22c55e; --yellow:#eab308; --red:#ef4444; --gray:#64748b; --accent:#3b82f6; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--bg); color:var(--text); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif; padding:24px; }
+  body { background:var(--bg); color:var(--text); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif; }
+  .login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  .login-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:32px; width:min(360px,92vw); }
+  .login-card h1 { font-size:20px; margin-bottom:20px; text-align:center; }
+  .login-card input, .field input { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:10px 12px; border-radius:8px; font-size:14px; margin-bottom:12px; }
+  .login-card button { width:100%; }
+  .app { padding:24px; max-width:1200px; margin:0 auto; }
   h1 { font-size:20px; margin-bottom:4px; }
   .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
   .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:20px; flex-wrap:wrap; }
   button { background:var(--accent); color:#fff; border:none; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:14px; }
   button:hover { filter:brightness(1.1); }
   button.ghost { background:var(--card); border:1px solid var(--border); color:var(--text); }
+  button.danger { background:#7f1d1d; }
   select { background:var(--card); color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:8px; font-size:14px; }
   input { background:var(--card); color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:8px; font-size:14px; }
   table { width:100%; border-collapse:collapse; background:var(--card); border-radius:10px; overflow:hidden; }
@@ -31,19 +38,41 @@
   .codec-v { border:1px solid #2563eb55; color:#93c5fd; }
   .codec-a { border:1px solid #a855f755; color:#d8b4fe; }
   .state { font-size:12px; color:var(--muted); }
-  a { color:var(--accent); text-decoration:none; font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  a { color:var(--accent); text-decoration:none; font-family:ui-monospace,Menlo,monospace; font-size:12px; word-break:break-all; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:50; }
   .modal-backdrop.open { display:flex; }
-  .modal { background:var(--card); border:1px solid var(--border); border-radius:12px; width:min(560px,92vw); max-height:85vh; overflow-y:auto; padding:20px; }
+  .modal { background:var(--card); border:1px solid var(--border); border-radius:12px; width:min(600px,94vw); max-height:85vh; overflow-y:auto; padding:20px; }
   .modal h2 { font-size:16px; margin-bottom:12px; }
   .modal .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
   .modal .row span:first-child { color:var(--muted); }
   .modal .row span:last-child { font-family:ui-monospace,Menlo,monospace; }
   .close { float:right; }
   .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  .topbar { display:flex; justify-content:flex-end; gap:8px; margin-bottom:16px; }
+  .error { color:var(--red); font-size:13px; margin-top:8px; text-align:center; }
+  .pass-cell { display:flex; align-items:center; gap:8px; }
+  .pass-cell .pw { font-family:ui-monospace,Menlo,monospace; font-size:13px; }
+  .eye { cursor:pointer; border:none; background:none; color:var(--muted); font-size:16px; padding:2px; }
 </style>
 </head>
 <body>
+
+<div id="loginView" class="login-wrap" style="display:none">
+  <div class="login-card">
+    <h1>SRT Relay Dashboard</h1>
+    <input id="loginUser" type="text" placeholder="Username" autocomplete="username">
+    <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password">
+    <button onclick="doLogin()">Sign in</button>
+    <div id="loginError" class="error"></div>
+  </div>
+</div>
+
+<div id="appView" class="app" style="display:none">
+  <div class="topbar">
+    <span id="whoAmI" style="color:var(--muted);font-size:14px;margin-right:auto"></span>
+    <button class="ghost" onclick="openUsers()">Users</button>
+    <button class="ghost" onclick="doLogout()">Log out</button>
+  </div>
   <h1>SRT Relay Dashboard</h1>
   <div class="sub">Senders and receivers connect as SRT callers. One stream = one ingress/egress port pair.</div>
 
@@ -53,7 +82,6 @@
     <button onclick="addStream()">Add stream</button>
     <button class="ghost" onclick="loadPorts()">Refresh ports</button>
   </div>
-  <div class="hint" id="portHint"></div>
 
   <table>
     <thead>
@@ -61,35 +89,100 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
+</div>
 
-  <div class="modal-backdrop" id="modal">
-    <div class="modal">
-      <button class="close ghost" onclick="closeModal()">✕</button>
-      <h2 id="modalTitle">Stream details</h2>
-      <div id="modalBody"></div>
-    </div>
+<div class="modal-backdrop" id="detailsModal">
+  <div class="modal">
+    <button class="close ghost" onclick="closeDetails()">✕</button>
+    <h2 id="modalTitle">Stream details</h2>
+    <div id="modalBody"></div>
   </div>
+</div>
+
+<div class="modal-backdrop" id="usersModal">
+  <div class="modal">
+    <button class="close ghost" onclick="closeUsers()">✕</button>
+    <h2>Users</h2>
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+      <input id="newUser" type="text" placeholder="Username" style="flex:1;min-width:120px">
+      <input id="newPass" type="text" placeholder="Password" style="flex:1;min-width:120px">
+      <button onclick="addUser()">New user</button>
+    </div>
+    <table>
+      <thead><tr><th>User</th><th>Password</th><th>Role</th><th></th></tr></thead>
+      <tbody id="userRows"></tbody>
+    </table>
+  </div>
+</div>
 
 <script>
 let HOST = location.hostname || "localhost";
+let CURRENT_USER = null;
+
+function el(id){ return document.getElementById(id); }
+
+async function api(path, opts){
+  opts = opts || {};
+  opts.credentials = "same-origin";
+  const r = await fetch(path, opts);
+  if(r.status === 401){ showLogin(); throw new Error("unauthorized"); }
+  if(!r.ok){ const t = await r.text().catch(()=>""); const err = new Error(t || r.status); err.status = r.status; throw err; }
+  return r.status===204 ? null : r.json();
+}
+
+function loginApi(path, opts){
+  opts = opts || {};
+  opts.credentials = "same-origin";
+  return fetch(path, opts);
+}
 
 async function loadConfig(){
   try {
     const cfg = await api("/api/config");
     if (cfg && cfg.host) HOST = cfg.host;
-  } catch (e) { /* fall back to location.hostname */ }
+  } catch (e) { }
 }
 
-function el(id){ return document.getElementById(id); }
+async function checkSession(){
+  try {
+    const me = await api("/api/me");
+    CURRENT_USER = me.user;
+    showApp();
+  } catch (e) {
+    showLogin();
+  }
+}
+
+function showLogin(){ el("loginView").style.display="flex"; el("appView").style.display="none"; }
+function showApp(){
+  el("loginView").style.display="none"; el("appView").style.display="block";
+  el("whoAmI").textContent = CURRENT_USER ? "Signed in as "+CURRENT_USER : "";
+  loadConfig(); loadPorts(); refresh(); connectWS();
+}
+
+async function doLogin(){
+  el("loginError").textContent = "";
+  const r = await loginApi("/api/login", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({user: el("loginUser").value, pass: el("loginPass").value})
+  });
+  if(!r.ok){ el("loginError").textContent = "Invalid username or password"; return; }
+  const me = await r.json();
+  CURRENT_USER = me.user;
+  el("loginUser").value=""; el("loginPass").value="";
+  showApp();
+}
+
+async function doLogout(){
+  await loginApi("/api/logout", {method:"POST"});
+  CURRENT_USER = null;
+  showLogin();
+}
+
 function healthDot(h){
   const cls = ["green","yellow","red","gray"].includes(h) ? h : "gray";
   return `<span class="dot ${cls}"></span>`;
-}
-
-async function api(path, opts){
-  const r = await fetch(path, opts);
-  if(!r.ok){ const t = await r.text().catch(()=>""); alert(t || r.status); throw new Error(t); }
-  return r.status===204 ? null : r.json();
 }
 
 async function loadPorts(){
@@ -109,20 +202,22 @@ async function addStream(){
   const inPort = parseInt(el("portSelect").value,10);
   if(!name){ alert("Enter a stream name"); return; }
   if(!inPort){ alert("Select an ingress port"); return; }
-  const st = await api("/api/streams/add", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({name, inPort})
-  });
+  try {
+    await api("/api/streams/add", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({name, inPort})
+    });
+  } catch(e){ alert(e.message); return; }
   el("nameInput").value = "";
   await loadPorts();
   renderAll();
-  return st;
 }
 
 async function removeStream(id){
   if(!confirm("Remove this stream?")) return;
-  await api("/api/streams/"+encodeURIComponent(id), {method:"DELETE"});
+  try { await api("/api/streams/"+encodeURIComponent(id), {method:"DELETE"}); }
+  catch(e){ alert(e.message); }
   await loadPorts();
   renderAll();
 }
@@ -136,17 +231,18 @@ function render(st){
   const codecs = (st.codecs||[]).map(c =>
     `<span class="badge ${c.type==="video"?"codec-v":"codec-a"}">${c.name}</span>`).join("");
   const bitrate = st.stats && st.stats.bitrateKbps>0 ? (st.stats.bitrateKbps/1000).toFixed(2)+" Mbps" : "—";
+  const sid = escapeHtml(st.streamId);
   return `<tr>
     <td>${dot}</td>
     <td><b>${escapeHtml(st.name)}</b><br><span class="state">${st.state}</span></td>
-    <td><code>${escapeHtml(st.streamId)}</code></td>
-    <td><a href="#" onclick="return false;" title="${srtUrl(st.inPort,'publish',st.streamId)}">${srtUrl(st.inPort,'publish',st.streamId)}</a></td>
-    <td><a href="#" onclick="return false;" title="${srtUrl(st.outPort,'read',st.streamId)}">${srtUrl(st.outPort,'read',st.streamId)}</a></td>
+    <td><code>${sid}</code></td>
+    <td><a href="#" onclick="return false;" title="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}">${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}</a></td>
+    <td><a href="#" onclick="return false;" title="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}">${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}</a></td>
     <td>${codecs||"—"}</td>
     <td>${bitrate}</td>
     <td>
-      <button class="ghost" onclick="showDetails('${escapeHtml(st.streamId)}')">Details</button>
-      <button class="ghost" onclick="removeStream('${escapeHtml(st.streamId)}')">✕</button>
+      <button class="ghost" onclick="showDetails('${sid}')">Details</button>
+      <button class="ghost" onclick="removeStream('${sid}')">✕</button>
     </td>
   </tr>`;
 }
@@ -175,37 +271,87 @@ function showDetails(id){
   ];
   el("modalTitle").textContent = "Stream: "+st.name;
   el("modalBody").innerHTML = rows.map(r=>`<div class="row"><span>${r[0]}</span><span>${escapeHtml(String(r[1]))}</span></div>`).join("");
-  el("modal").classList.add("open");
+  el("detailsModal").classList.add("open");
+}
+function closeDetails(){ el("detailsModal").classList.remove("open"); }
+
+// --- users ---
+
+async function openUsers(){
+  try {
+    users = await api("/api/users");
+    renderUsers();
+    el("usersModal").classList.add("open");
+  } catch(e){ alert(e.message); }
+}
+function closeUsers(){ el("usersModal").classList.remove("open"); }
+
+function renderUsers(){
+  el("userRows").innerHTML = users.map(u=>`
+    <tr>
+      <td><b>${escapeHtml(u.user)}</b></td>
+      <td><div class="pass-cell"><span class="pw" data-user="${escapeHtml(u.user)}">••••••</span>
+        <button class="eye" onclick="togglePw('${escapeHtml(u.user)}')">👁</button></div></td>
+      <td>${escapeHtml(u.role||"admin")}</td>
+      <td style="text-align:right"><button class="ghost danger" onclick="removeUser('${escapeHtml(u.user)}')">🗑</button></td>
+    </tr>`).join("");
 }
 
-function closeModal(){ el("modal").classList.remove("open"); }
+function togglePw(user){
+  const span = document.querySelector(`.pw[data-user="${CSS.escape(user)}"]`);
+  if(!span) return;
+  const u = users.find(x=>x.user===user);
+  span.textContent = span.textContent === "••••••" ? (u.pass||"") : "••••••";
+}
+
+async function addUser(){
+  const u = el("newUser").value.trim();
+  const p = el("newPass").value;
+  if(!u || !p){ alert("Enter username and password"); return; }
+  try {
+    users = await api("/api/users/add", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({user: u, pass: p})
+    });
+    el("newUser").value=""; el("newPass").value="";
+    renderUsers();
+  } catch(e){ alert(e.message); }
+}
+
+async function removeUser(user){
+  if(!confirm("Remove user "+user+"?")) return;
+  try {
+    users = await api("/api/users/"+encodeURIComponent(user), {method:"DELETE"});
+    renderUsers();
+  } catch(e){ alert(e.message); }
+}
+
 function escapeHtml(x){ return x.replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 let streams = [];
+let users = [];
 async function refresh(){
-  streams = await api("/api/streams");
-  renderAll();
+  try { streams = await api("/api/streams"); renderAll(); } catch(e){}
 }
 
-// Live updates via WebSocket.
 function connectWS(){
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onmessage = (e)=>{
-    const m = JSON.parse(e.data);
-    if(m.type==="stream"){
-      const i = streams.findIndex(s=>s.streamId===m.stream.streamId);
-      if(i>=0){ streams[i] = m.stream; } else { streams.push(m.stream); }
-      renderAll();
-    }
+    try {
+      const m = JSON.parse(e.data);
+      if(m.type==="stream"){
+        const i = streams.findIndex(s=>s.streamId===m.stream.streamId);
+        if(i>=0){ streams[i] = m.stream; } else { streams.push(m.stream); }
+        renderAll();
+      }
+    } catch(err){}
   };
   ws.onclose = ()=>{ setTimeout(connectWS, 3000); };
 }
 
-loadConfig();
-loadPorts();
-refresh();
-connectWS();
+checkSession();
 </script>
 </body>
 </html>
