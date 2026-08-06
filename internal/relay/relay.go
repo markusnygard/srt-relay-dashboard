@@ -66,10 +66,12 @@ type Stream struct {
 	AutoRemove bool       `json:"autoRemove"` // remove after stopAt (one-off)
 	Contact    string     `json:"contact"`    // free-text contact person
 
-	State       StreamState `json:"state"`
-	Codecs      []Codec     `json:"codecs"`
-	Stats       Stats       `json:"stats"`
-	ConnectedAt time.Time   `json:"connectedAt"`
+	State            StreamState `json:"state"`
+	Codecs           []Codec     `json:"codecs"`
+	Stats            Stats       `json:"stats"`
+	ConnectedAt      time.Time   `json:"connectedAt"`
+	IngressConnected bool        `json:"ingressConnected"` // publisher connected
+	EgressConnected  bool        `json:"egressConnected"`  // reader connected
 
 	// internal
 	active       bool

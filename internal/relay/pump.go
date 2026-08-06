@@ -87,11 +87,21 @@ func (s *Stream) run(host string, latency int) {
 			s.touch()
 			inSock.SetPollTimeout(1 * time.Second)
 
+			s.mu.Lock()
+			s.IngressConnected = true
+			s.EgressConnected = false
+			s.mu.Unlock()
+			s.update()
+
 			// Leg 2: receiver connects to a persistent egress listener.
 			outSock, oerr := s.acceptEgress(host, s.OutPort, options, inSock)
 			if oerr != nil {
 				s.logf("egress accept error on %d: %v", s.OutPort, oerr)
 				inSock.Close()
+				s.mu.Lock()
+				s.IngressConnected = false
+				s.mu.Unlock()
+				s.update()
 				select {
 				case <-s.stopCh:
 					inListener.Close()
@@ -110,6 +120,7 @@ func (s *Stream) run(host string, latency int) {
 			s.ConnectedAt = time.Now()
 			s.Codecs = nil
 			s.Stats = Stats{Health: HealthGreen}
+			s.EgressConnected = true
 			s.mu.Unlock()
 			s.update()
 
@@ -125,6 +136,8 @@ func (s *Stream) run(host string, latency int) {
 			s.State = StateWaiting
 			s.Codecs = nil
 			s.Stats = Stats{}
+			s.IngressConnected = false
+			s.EgressConnected = false
 			s.mu.Unlock()
 			s.update()
 		}

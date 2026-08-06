@@ -71,8 +71,9 @@
   .cal-event.waiting { background:#1e40af; }
   .cal-event.scheduled { background:#374151; }
   .cal-event.relaying { background:#15803d; }
-  .cal-event .live { display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; animation:blink 1.2s infinite; }
+  .cal-event .live { display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; }
   @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+  .dot.pulse { animation:blink 1.2s infinite; }
   .cal-nav { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
   .cal-nav span { font-weight:600; min-width:180px; }
   .cal-nav .nowbtn { margin-left:auto; }
@@ -80,7 +81,7 @@
   .legend .lg { display:flex; align-items:center; gap:6px; }
   .legend .sw { width:14px; height:14px; border-radius:4px; display:inline-block; }
   .legend .lg .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-  .legend .lg .status-dot.live { background:var(--green); animation:blink 1.2s infinite; }
+  .legend .lg .status-dot.live { background:var(--green); }
   .legend .lg .status-dot.idle { background:var(--gray); }
 </style>
 </head>
@@ -137,12 +138,10 @@
       <button class="ghost nowbtn" onclick="calNow()">Now</button>
     </div>
     <div class="legend">
-      <div class="lg"><span class="sw" style="background:#15803d"></span> event running</div>
-      <div class="lg"><span class="sw" style="background:#1e40af"></span> waiting</div>
-      <div class="lg"><span class="sw" style="background:#374151"></span> scheduled</div>
-      <div class="lg"><span class="sw" style="background:#1d4ed8"></span> no schedule</div>
-      <div class="lg"><span class="status-dot live"></span> stream is live now</div>
-      <div class="lg"><span class="status-dot idle"></span> no stream connected</div>
+      <div class="lg"><span class="dot gray"></span> no ingress</div>
+      <div class="lg"><span class="dot yellow"></span> ingress OK, no egress</div>
+      <div class="lg"><span class="dot green"></span> ingress + egress OK</div>
+      <div class="lg"><span class="dot red pulse"></span> ingress problems</div>
     </div>
     <div class="cal-scroll" id="calScroll">
       <div class="cal-head" id="calHead"></div>
@@ -283,6 +282,23 @@ function setTab(t){
   if(t==="calendar") renderCalendar();
 }
 
+// Traffic light per the requested logic:
+//   grey   - ingress not connected (idle)
+//   yellow - ingress connected & OK, egress not connected
+//   green  - ingress + egress connected, no problems
+//   red    - ingress has problems (pulsing)
+function trafficLight(st){
+  const ing = !!st.ingressConnected;
+  const egr = !!st.egressConnected;
+  const health = st.stats ? st.stats.health : "";
+  const problems = ing && (health === "red" || health === "yellow");
+
+  if(!ing) return `<span class="dot gray"></span>`;
+  if(!egr) return `<span class="dot yellow"></span>`;
+  if(problems) return `<span class="dot red pulse"></span>`;
+  return `<span class="dot green"></span>`;
+}
+
 function healthDot(h){
   const cls = ["green","yellow","red","gray"].includes(h) ? h : "gray";
   return `<span class="dot ${cls}"></span>`;
@@ -341,15 +357,16 @@ function srtUrl(port, action, streamId){
 }
 
 function render(st){
-  // Green pulsing dot when a stream is actually receiving, else the health light.
-  const live = st.state === "relaying";
-  const dot = live
-    ? `<span class="dot green" style="animation:blink 1.2s infinite"></span>`
-    : healthDot(st.stats ? st.stats.health : "gray");
+  const dot = trafficLight(st);
   const codecs = (st.codecs||[]).map(c =>
     `<span class="badge ${c.type==="video"?"codec-v":"codec-a"}">${c.name}</span>`).join("");
   const bitrate = st.stats && st.stats.bitrateKbps>0 ? (st.stats.bitrateKbps/1000).toFixed(2)+" Mbps" : "—";
   const sid = escapeHtml(st.streamId);
+  const hasIngress = !!st.ingressConnected;
+  // Only show Details when there is an ingress; no ingress = no details.
+  const actions = VIEW_MODE ? "" : (hasIngress
+    ? `<button class="ghost" onclick="showDetails('${sid}')">Details</button> <button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`
+    : `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`);
   return `<tr>
     <td>${dot}</td>
     <td><b>${escapeHtml(st.name)}</b><br><span class="state">${st.state}</span></td>
@@ -359,7 +376,7 @@ function render(st){
     <td><a href="#" onclick="return false;" title="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}">${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}</a></td>
     <td>${codecs||"—"}</td>
     <td>${bitrate}</td>
-    <td>${VIEW_MODE ? "" : `<button class="ghost" onclick="showDetails('${sid}')">Details</button> <button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`}</td>
+    <td>${actions}</td>
   </tr>`;
 }
 
@@ -526,7 +543,8 @@ function renderCalendar(){
       // unscheduled (always-on) stream: live right now
       return true;
     });
-    const liveMark = (isToday && anyLive) ? `<span class="dot green" style="margin-left:4px"></span>` : "";
+    const anyProblems = streams.some(st => st.state === "relaying" && st.stats && (st.stats.health === "red" || st.stats.health === "yellow"));
+    const liveMark = (isToday && anyLive) ? (anyProblems ? `<span class="dot red pulse" style="margin-left:4px"></span>` : `<span class="dot green" style="margin-left:4px"></span>`) : "";
     headHtml += `<div class="${isToday?"today-head":""}"><div class="dayname">${dayNames[dayIdx]}</div><div class="daynum">${d.getDate()}${liveMark}</div></div>`;
   }
   head.innerHTML = headHtml;
@@ -557,7 +575,9 @@ function renderCalendar(){
           const cls = liveNow ? "relaying" : (st.state==="scheduled"?"scheduled":"waiting");
           const startLabel = blk.startMs === ws.getTime() ? "" : fmtTimeOnly(blk.startMs);
           const clickAttr = VIEW_MODE ? "" : `onclick="event.stopPropagation(); showDetails('${escapeHtml(st.streamId)}')"`;
-          evHtml += `<div class="cal-event ${cls}" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} · ${fmtDTShort(new Date(blk.startMs))}" ${clickAttr}>${liveNow?'<span class="live"></span>':''}${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} ${startLabel}</div>`;
+          const tl = trafficLight(st);
+          const name = liveNow ? `<b>${escapeHtml(st.name)}</b>` : escapeHtml(st.name);
+          evHtml += `<div class="cal-event ${cls}" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} · ${fmtDTShort(new Date(blk.startMs))}" ${clickAttr}>${tl}${name}${st.contact?" · "+escapeHtml(st.contact):""} ${startLabel}</div>`;
         }
       }
       // Green "live" indicator on the current-day, current-hour cell when a stream is relaying
