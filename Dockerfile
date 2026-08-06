@@ -15,6 +15,7 @@ RUN git clone --depth 1 --branch v1.5.6 https://github.com/Haivision/srt.git . \
 
 WORKDIR /app
 COPY go.mod go.sum* ./
+COPY third_party/ third_party/
 RUN go mod download
 
 COPY . .

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -112,6 +113,10 @@ func (s *Stream) run(host string, latency int) {
 			}
 			s.logf("egress accepted on %d", s.OutPort)
 
+			// Clear the probe deadline so the pump's reads don't instantly
+			// time out (zero time = no deadline).
+			inSock.SetReadDeadline(time.Time{})
+
 			// Only treat ingress as the publisher leg; grab its streamid.
 			streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
 
@@ -168,6 +173,8 @@ func (s *Stream) acceptEgress(host string, port int, options map[string]string, 
 	}
 	defer listener.Close()
 
+	probeBuf := make([]byte, 1400)
+
 	for {
 		select {
 		case <-s.stopCh:
@@ -182,25 +189,44 @@ func (s *Stream) acceptEgress(host string, port int, options map[string]string, 
 			return nil, fmt.Errorf("deactivated")
 		}
 
-		// If the publisher has disconnected while we waited for a reader,
-		// stop waiting and let the run loop clean up.
-		if st, err := inSock.Stats(); err != nil || st == nil {
-			return nil, fmt.Errorf("publisher gone")
+		// Probe the publisher socket: a short read forces SRT to notice a
+		// lost peer (SockState alone stays CONNECTED because nothing polls
+		// the socket during the wait). A deadline timeout means "alive but
+		// idle"; any other error means the publisher is gone.
+		inSock.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		n, rerr := inSock.Read(probeBuf)
+		if rerr != nil {
+			if !isTimeout(rerr) {
+				return nil, fmt.Errorf("publisher gone: %v", rerr)
+			}
+		} else if n > 0 {
+			s.touch()
+		}
+		if inSock.SockState() != srtgo.SRTS_CONNECTED {
+			return nil, fmt.Errorf("publisher gone (state %d)", inSock.SockState())
 		}
 
 		s.logf("accepting egress on port %d", port)
+		listener.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		conn, _, aerr := listener.Accept()
 		if aerr != nil {
 			select {
 			case <-s.stopCh:
 				return nil, fmt.Errorf("stopped")
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(100 * time.Millisecond):
 			}
 			continue
 		}
 		conn.SetPollTimeout(1 * time.Second)
 		return conn, nil
 	}
+}
+
+// isTimeout reports whether an srtgo error is a poll/timeout condition (i.e.
+// the peer is connected but simply has no data right now).
+func isTimeout(err error) bool {
+	var t interface{ Timeout() bool }
+	return errors.As(err, &t) && t.Timeout()
 }
 
 func (s *Stream) pump(in, out *srtgo.SrtSocket, streamID string) {
