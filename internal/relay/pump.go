@@ -88,7 +88,7 @@ func (s *Stream) run(host string, latency int) {
 			inSock.SetPollTimeout(1 * time.Second)
 
 			// Leg 2: receiver connects to a persistent egress listener.
-			outSock, oerr := s.acceptEgress(host, s.OutPort, options)
+			outSock, oerr := s.acceptEgress(host, s.OutPort, options, inSock)
 			if oerr != nil {
 				s.logf("egress accept error on %d: %v", s.OutPort, oerr)
 				inSock.Close()
@@ -118,6 +118,15 @@ func (s *Stream) run(host string, latency int) {
 
 			inSock.Close()
 			outSock.Close()
+
+			// Reset to waiting so the dashboard no longer shows relaying
+			// after the publisher/reader disconnect.
+			s.mu.Lock()
+			s.State = StateWaiting
+			s.Codecs = nil
+			s.Stats = Stats{}
+			s.mu.Unlock()
+			s.update()
 		}
 	}
 }
@@ -137,7 +146,9 @@ func (s *Stream) newListener(host string, port int, options map[string]string) (
 }
 
 // acceptEgress creates a persistent egress listener and accepts one reader.
-func (s *Stream) acceptEgress(host string, port int, options map[string]string) (*srtgo.SrtSocket, error) {
+// It aborts if the stream is stopped/deactivated or if the publisher
+// (ingress socket) has gone away while we wait for a reader.
+func (s *Stream) acceptEgress(host string, port int, options map[string]string, inSock *srtgo.SrtSocket) (*srtgo.SrtSocket, error) {
 	listener, err := s.newListener(host, port, options)
 	if err != nil {
 		return nil, err
@@ -156,6 +167,12 @@ func (s *Stream) acceptEgress(host string, port int, options map[string]string) 
 		s.mu.Unlock()
 		if !active {
 			return nil, fmt.Errorf("deactivated")
+		}
+
+		// If the publisher has disconnected while we waited for a reader,
+		// stop waiting and let the run loop clean up.
+		if st, err := inSock.Stats(); err != nil || st == nil {
+			return nil, fmt.Errorf("publisher gone")
 		}
 
 		s.logf("accepting egress on port %d", port)
