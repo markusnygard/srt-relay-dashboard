@@ -41,11 +41,11 @@ func (s *Stream) run(host string, latency int) {
 
 		s.setState(StateWaiting)
 
-		// Leg 1: sender OBS connects to ingress port.
-		s.logf("accepting ingress on port %d", s.InPort)
-		inSock, err := s.acceptOne(host, s.InPort, options)
+		// Create one persistent ingress listener that stays bound so SRT
+		// handshakes are always received (no 2s gaps between attempts).
+		inListener, err := s.newListener(host, s.InPort, options)
 		if err != nil {
-			s.logf("ingress accept error on %d: %v", s.InPort, err)
+			s.logf("ingress listen error on %d: %v", s.InPort, err)
 			select {
 			case <-s.stopCh:
 				return
@@ -53,61 +53,124 @@ func (s *Stream) run(host string, latency int) {
 			}
 			continue
 		}
-		s.logf("ingress accepted on %d", s.InPort)
-		s.touch()
 
-		// Leg 2: receiver OBS connects to egress port.
-		s.logf("accepting egress on port %d", s.OutPort)
-		outSock, err := s.acceptOne(host, s.OutPort, options)
-		if err != nil {
-			s.logf("egress accept error on %d: %v", s.OutPort, err)
+		// Accept loop on the same ingress listener until deactivated/stopped.
+		for {
+			select {
+			case <-s.stopCh:
+				inListener.Close()
+				return
+			default:
+			}
+
+			s.mu.Lock()
+			active = s.active
+			s.mu.Unlock()
+			if !active {
+				inListener.Close()
+				break
+			}
+
+			s.logf("accepting ingress on port %d", s.InPort)
+			inSock, _, err := inListener.Accept()
+			if err != nil {
+				// transient accept error: keep listening, brief pause
+				select {
+				case <-s.stopCh:
+					inListener.Close()
+					return
+				case <-time.After(500 * time.Millisecond):
+				}
+				continue
+			}
+			s.logf("ingress accepted on %d", s.InPort)
+			s.touch()
+			inSock.SetPollTimeout(1 * time.Second)
+
+			// Leg 2: receiver connects to a persistent egress listener.
+			outSock, oerr := s.acceptEgress(host, s.OutPort, options)
+			if oerr != nil {
+				s.logf("egress accept error on %d: %v", s.OutPort, oerr)
+				inSock.Close()
+				select {
+				case <-s.stopCh:
+					inListener.Close()
+					return
+				case <-time.After(500 * time.Millisecond):
+				}
+				continue
+			}
+			s.logf("egress accepted on %d", s.OutPort)
+
+			// Only treat ingress as the publisher leg; grab its streamid.
+			streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
+
+			s.mu.Lock()
+			s.State = StateRelaying
+			s.ConnectedAt = time.Now()
+			s.Codecs = nil
+			s.Stats = Stats{Health: HealthGreen}
+			s.mu.Unlock()
+			s.update()
+
+			// Pump ingress -> egress while sniffing TS for codecs.
+			s.pump(inSock, outSock, streamID)
+
 			inSock.Close()
-			continue
-		}
-		s.logf("egress accepted on %d", s.OutPort)
-
-		// Only treat ingress as the publisher leg; grab its streamid.
-		streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
-
-		s.mu.Lock()
-		s.State = StateRelaying
-		s.ConnectedAt = time.Now()
-		s.Codecs = nil
-		s.Stats = Stats{Health: HealthGreen}
-		s.mu.Unlock()
-		s.update()
-
-		// Pump ingress -> egress while sniffing TS for codecs.
-		s.pump(inSock, outSock, streamID)
-
-		inSock.Close()
-		outSock.Close()
-
-		select {
-		case <-s.stopCh:
-			return
-		case <-time.After(2 * time.Second):
+			outSock.Close()
 		}
 	}
 }
 
-func (s *Stream) acceptOne(host string, port int, options map[string]string) (*srtgo.SrtSocket, error) {
+// newListener creates and binds a persistent SRT listener socket.
+func (s *Stream) newListener(host string, port int, options map[string]string) (*srtgo.SrtSocket, error) {
 	sock := srtgo.NewSrtSocket(host, uint16(port), options)
 	if sock == nil {
 		return nil, fmt.Errorf("failed to create srt socket on %d", port)
 	}
-	if err := sock.Listen(2); err != nil {
+	if err := sock.Listen(8); err != nil {
 		sock.Close()
 		return nil, err
 	}
-	sock.SetPollTimeout(500 * time.Millisecond)
-	conn, _, err := sock.Accept()
-	sock.Close() // the listening socket is no longer needed
+	sock.SetPollTimeout(1 * time.Second)
+	return sock, nil
+}
+
+// acceptEgress creates a persistent egress listener and accepts one reader.
+func (s *Stream) acceptEgress(host string, port int, options map[string]string) (*srtgo.SrtSocket, error) {
+	listener, err := s.newListener(host, port, options)
 	if err != nil {
 		return nil, err
 	}
-	conn.SetPollTimeout(1 * time.Second)
-	return conn, nil
+	defer listener.Close()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return nil, fmt.Errorf("stopped")
+		default:
+		}
+
+		s.mu.Lock()
+		active := s.active
+		s.mu.Unlock()
+		if !active {
+			return nil, fmt.Errorf("deactivated")
+		}
+
+		s.logf("accepting egress on port %d", port)
+		conn, _, aerr := listener.Accept()
+		if aerr != nil {
+			select {
+			case <-s.stopCh:
+				return nil, fmt.Errorf("stopped")
+			case <-time.After(500 * time.Millisecond):
+			}
+			continue
+		}
+		conn.SetPollTimeout(1 * time.Second)
+		return conn, nil
+	}
 }
 
 func (s *Stream) pump(in, out *srtgo.SrtSocket, streamID string) {
@@ -184,4 +247,3 @@ func (s *Stream) pump(in, out *srtgo.SrtSocket, streamID string) {
 		s.mu.Unlock()
 	}
 }
-
