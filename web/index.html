@@ -143,6 +143,9 @@
     <button class="close ghost" onclick="closeDetails()">✕</button>
     <h2 id="modalTitle">Stream details</h2>
     <div id="modalBody"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="ghost" onclick="editFromDetails()">Edit schedule</button>
+    </div>
   </div>
 </div>
 
@@ -375,6 +378,12 @@ function showDetails(id){
   el("modalTitle").textContent = "Stream: "+st.name;
   el("modalBody").innerHTML = rows.map(r=>`<div class="row"><span>${r[0]}</span><span>${escapeHtml(String(r[1]))}</span></div>`).join("");
   el("detailsModal").classList.add("open");
+  el("detailsModal").dataset.editId = st.streamId;
+}
+function editFromDetails(){
+  const id = el("detailsModal").dataset.editId;
+  closeDetails();
+  if(id) openSchedule(id);
 }
 function closeDetails(){ el("detailsModal").classList.remove("open"); }
 
@@ -420,6 +429,11 @@ function streamBlocks(st, weekStart){
   const start = st.startAt ? new Date(st.startAt).getTime() : null;
   const stop = st.stopAt ? new Date(st.stopAt).getTime() : null;
 
+  // A stream with no schedule at all is "always on" — don't flood the calendar.
+  if(st.recurrence === "" && start === null && stop === null){
+    return blocks;
+  }
+
   if(st.recurrence === "daily" || st.recurrence === "weekly"){
     // compute occurrences within the week
     if(!start) return blocks;
@@ -451,7 +465,15 @@ function streamBlocks(st, weekStart){
   // one-off
   const blk = {startMs: start !== null ? start : ws, stopMs: stop !== null ? stop : null};
   if(blk.startMs < ws) blk.startMs = ws;
-  if(blk.stopMs !== null && blk.stopMs > we) blk.stopMs = we;
+  // One-off with no stop time: clamp to the end of the start day so it
+  // doesn't flood the rest of the week.
+  if(blk.stopMs === null){
+    const endDay = new Date(blk.startMs);
+    endDay.setHours(23, 59, 59, 0);
+    blk.stopMs = Math.min(endDay.getTime(), we);
+  } else if(blk.stopMs > we) {
+    blk.stopMs = we;
+  }
   if(blk.stopMs !== null && blk.stopMs <= blk.startMs) return blocks;
   // only show if overlaps week
   if(blk.stopMs === null || blk.stopMs > ws){
@@ -487,7 +509,8 @@ function renderCalendar(){
           const liveNow = isNowWithin(st, blk);
           const cls = liveNow ? (st.state==="relaying"?"relaying":st.state==="scheduled"?"scheduled":"waiting") : "waiting";
           const startLabel = blk.startMs === ws.getTime() ? "" : fmtTimeOnly(blk.startMs);
-          evHtml += `<div class="cal-event ${cls}" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} · ${fmtDTShort(new Date(blk.startMs))}" onclick="${VIEW_MODE?"":"showDetails('"+escapeHtml(st.streamId)+"')"}">${liveNow?'<span class="live"></span>':''}${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} ${startLabel}</div>`;
+          const clickAttr = VIEW_MODE ? "" : `onclick="event.stopPropagation(); showDetails('${escapeHtml(st.streamId)}')"`;
+          evHtml += `<div class="cal-event ${cls}" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} · ${fmtDTShort(new Date(blk.startMs))}" ${clickAttr}>${liveNow?'<span class="live"></span>':''}${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} ${startLabel}</div>`;
         }
       }
       const today = sameDay(new Date(), cellDate);
@@ -548,9 +571,9 @@ function openSchedule(idOrName, cellMs, hourStart){
   el("schAuto").checked = st ? !!st.autoRemove : false;
   if(st && st.startAt) el("schStart").value = toLocalInput(st.startAt); else el("schStart").value = "";
   if(st && st.stopAt) el("schStop").value = toLocalInput(st.stopAt); else el("schStop").value = "";
-  // prefill time from a clicked cell
-  if(!st && cellMs){
-    const d = new Date(parseInt(cellMs));
+  // prefill time from a clicked cell (day start + hour)
+  if(!st && hourStart){
+    const d = new Date(parseInt(hourStart));
     el("schStart").value = toLocalInput(d.toISOString());
   }
   el("schPort").value = st ? String(st.inPort) : "";
