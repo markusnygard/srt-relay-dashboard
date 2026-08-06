@@ -138,6 +138,78 @@ export LD_LIBRARY_PATH=$(pwd)
 | `--egress-offset` | `100` | egress port = ingress + offset |
 | `--host-ip` | auto | IP shown to senders/receivers in the web UI (auto-detected if empty; set it if the relay is behind NAT or has multiple NICs) |
 | `--users` | `users.json` | path to the users file (created with `admin/admin` on first run) |
+| `--streams` | `streams.json` | path to the streams/schedule file (persisted across restarts) |
+| `--idle-remove-min` | `0` | remove streams with no publisher after N minutes (0 = disabled) |
+| `--view` | off | enable the public read-only view page at `/view` (for infoscreens) |
+
+## Scheduling
+
+Streams can be scheduled with optional **start** and **stop** times, plus a
+**recurrence** (`daily` or `weekly`) and an **auto-remove** flag:
+
+- **Start not set** → the stream starts immediately.
+- **Stop not set** → the stream only stops manually.
+- **Stop set + auto-remove** (one-off) → the stream is removed after it stops.
+- **Idle cleanup** (`--idle-remove-min`) → streams with no publisher for N
+  minutes are removed (manual/un-scheduled streams only).
+
+Use the **Calendar** tab (week view) to schedule streams — click a free slot to
+create one with the date/time prefilled, or click an event to edit it. Free
+ports exclude both live and future-scheduled streams, so a port can't be
+double-booked.
+
+## Time model
+
+All times are **absolute instants** (RFC3339). The server is authoritative —
+it starts/stops streams on its own clock. The browser always displays and
+inputs times in the **viewer's local timezone**; on save, the UI converts the
+chosen local datetime to the absolute instant. Recurring schedules are anchored
+to the **server's local wall clock** (so they follow the server's DST), and the
+UI shows their equivalent in your timezone. The server's timezone is exposed in
+the config and shown in the dashboard header.
+
+## Contact person
+
+Every stream can carry a free-text **contact** field (name/email/phone) so you
+know who owns each stream. It appears in the streams table, the calendar
+events, the details popup, and the public view — and in DataMiner metrics.
+
+## Read-only view (infoscreen)
+
+With `--view` enabled, these are public (no login):
+
+- `/view` — read-only week calendar for an infoscreen
+- `/api/view/streams` — stable JSON status (no users, no passwords)
+- `/api/view/config` — host / ports / timezone
+- `/ws/view` — read-only WebSocket updates
+- `/metrics` — Prometheus metrics
+
+When `--view` is off, `/view` and the view endpoints are not served.
+
+## DataMiner integration
+
+DataMiner can ingest the relay through two standard paths:
+
+**1. Generic REST API connector** — point it at `http://RELAY:3001/api/view/streams`
+(auth not required when `--view` is on). The response is a stable JSON array,
+one object per stream, with: `name`, `contact`, `inPort`, `outPort`, `state`,
+`startAt`, `stopAt`, `recurrence`, `stats` (bitrate, retransmitted, lost,
+jitter, rtt, health), `codecs`. Map the fields you want via JSONPath.
+
+**2. Prometheus** — DataMiner's Prometheus integration (or Grafana) can scrape
+`http://RELAY:3001/metrics`. Per stream (labels `stream`, `contact`,
+`in_port`, `out_port`):
+
+```
+srt_stream_up{...} 1|0
+srt_stream_bitrate_kbps{...}
+srt_stream_bytes_in_total{...}
+srt_stream_bytes_out_total{...}
+srt_stream_retransmitted_total{...}
+srt_stream_lost_total{...}
+srt_stream_jitter_ms{...}
+srt_stream_rtt_ms{...}
+```
 
 ## Authentication
 
@@ -156,6 +228,8 @@ API; the list shows a masked value.
 
 All endpoints except `POST /api/login` require a session cookie (obtained from
 login). `POST /api/logout` is also public so a client can always sign out.
+The `/api/view/*`, `/metrics` and `/ws/view` endpoints are public only when
+`--view` is enabled.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -164,13 +238,19 @@ login). `POST /api/logout` is also public so a client can always sign out.
 | GET  | `/api/me`       | current user |
 | GET  | `/api/users`    | list users |
 | POST | `/api/users/add` | `{"user": "...", "pass": "..."}` |
+| POST | `/api/users/{user}/password` | set/reset a password `{"pass": "..."}` |
 | DELETE | `/api/users/{user}` | remove a user |
-| GET  | `/api/config`   | host / port ranges |
-| GET  | `/api/streams`       | list streams with stats |
-| POST | `/api/streams/add`   | `{"name": "...", "inPort": 21001}` |
+| GET  | `/api/config`   | host / ports / view flag / server timezone |
+| GET  | `/api/streams`       | list streams with stats + schedule |
+| POST | `/api/streams/add`   | `{"name","inPort","contact?","startAt?","stopAt?","recurrence?","autoRemove?"}` (times = RFC3339) |
+| PATCH | `/api/streams/{id}` | edit schedule / recurrence / contact |
 | DELETE | `/api/streams/{id}` | remove a stream |
-| GET  | `/api/ports/free`    | list free ingress ports |
-| WS   | `/ws`                | live stream updates |
+| GET  | `/api/ports/free`    | list free ingress ports (excludes scheduled) |
+| WS   | `/ws`                | live stream updates (auth) |
+| GET  | `/api/view/streams`  | public read-only JSON status (when `--view`) |
+| GET  | `/api/view/config`   | public config (when `--view`) |
+| WS   | `/ws/view`           | public read-only updates (when `--view`) |
+| GET  | `/metrics`           | Prometheus metrics (when `--view`) |
 
 ## Health light logic
 

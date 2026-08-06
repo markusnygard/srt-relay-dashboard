@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/net/websocket"
 	"srt-relay-app/internal/relay"
@@ -18,26 +19,34 @@ import (
 //go:embed web/*
 var webFS embed.FS
 
+// serverTimeZone is the server's local timezone, exposed to the UI so it can
+// show server-local time alongside browser-local time.
+var serverTimeZone string
+
 type server struct {
 	relay        *relay.Relay
 	auth         *authManager
 	mu           sync.Mutex
 	clients      map[*websocket.Conn]bool
+	viewClients  map[*websocket.Conn]bool
 	portLow      int
 	portHigh     int
 	egressOffset int
 	publicHost   string
+	viewEnabled  bool
 }
 
-func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, publicHost string) *server {
+func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, publicHost string, viewEnabled bool) *server {
 	s := &server{
 		relay:        r,
 		auth:         auth,
 		clients:      make(map[*websocket.Conn]bool),
+		viewClients:  make(map[*websocket.Conn]bool),
 		portLow:      portLow,
 		portHigh:     portHigh,
 		egressOffset: egressOffset,
 		publicHost:   publicHost,
+		viewEnabled:  viewEnabled,
 	}
 	r.SetOnChange(s.broadcast)
 	return s
@@ -50,6 +59,12 @@ func (s *server) broadcast(st *relay.Stream) {
 	for c := range s.clients {
 		if _, err := c.Write(data); err != nil {
 			delete(s.clients, c)
+		}
+	}
+	vdata, _ := json.Marshal(st)
+	for c := range s.viewClients {
+		if _, err := c.Write(vdata); err != nil {
+			delete(s.viewClients, c)
 		}
 	}
 }
@@ -77,9 +92,38 @@ func (s *server) handleWS(ws *websocket.Conn) {
 	ws.Close()
 }
 
+// handleViewWS is the public read-only WebSocket used by the infoscreen page.
+func (s *server) handleViewWS(ws *websocket.Conn) {
+	s.mu.Lock()
+	s.viewClients[ws] = true
+	s.mu.Unlock()
+
+	for _, st := range s.relay.ListStreams() {
+		data, _ := json.Marshal(st)
+		ws.Write(data)
+	}
+
+	var msg string
+	for {
+		if err := websocket.Message.Receive(ws, &msg); err != nil {
+			break
+		}
+	}
+
+	s.mu.Lock()
+	delete(s.viewClients, ws)
+	s.mu.Unlock()
+	ws.Close()
+}
+
 type addStreamRequest struct {
-	Name   string `json:"name"`
-	InPort int    `json:"inPort"`
+	Name       string     `json:"name"`
+	InPort     int        `json:"inPort"`
+	StartAt    *time.Time `json:"startAt"`
+	StopAt     *time.Time `json:"stopAt"`
+	Recurrence string     `json:"recurrence"`
+	AutoRemove bool       `json:"autoRemove"`
+	Contact    string     `json:"contact"`
 }
 
 func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +140,7 @@ func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
-	if s.relay.PortInUse(req.InPort) || s.relay.PortInUse(req.InPort+s.egressOffset) {
+	if s.relay.PortClaimed(req.InPort) || s.relay.PortClaimed(req.InPort+s.egressOffset) {
 		http.Error(w, "port already in use", http.StatusConflict)
 		return
 	}
@@ -106,7 +150,34 @@ func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	streamID := generateStreamID(req.Name)
-	st := s.relay.AddStream(req.Name, streamID, req.InPort, req.InPort+s.egressOffset)
+	st := s.relay.AddStream(req.Name, streamID, req.InPort, req.InPort+s.egressOffset,
+		req.StartAt, req.StopAt, req.Recurrence, req.AutoRemove, req.Contact)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(st)
+}
+
+func (s *server) handlePatchStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/streams/")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	st := s.relay.GetStream(id)
+	if st == nil {
+		http.Error(w, "stream not found", http.StatusNotFound)
+		return
+	}
+	var req addStreamRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	st.UpdateSchedule(req.StartAt, req.StopAt, req.Recurrence, req.AutoRemove, req.Contact)
+	s.relay.PersistNow()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(st)
 }
@@ -135,7 +206,7 @@ func (s *server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleFreePorts(w http.ResponseWriter, r *http.Request) {
 	var free []int
 	for p := s.portLow; p <= s.portHigh; p++ {
-		if !s.relay.PortInUse(p) && !s.relay.PortInUse(p+s.egressOffset) {
+		if !s.relay.PortClaimed(p) && !s.relay.PortClaimed(p+s.egressOffset) {
 			free = append(free, p)
 		}
 	}
@@ -146,11 +217,43 @@ func (s *server) handleFreePorts(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"host":         s.publicHost,
-		"portLow":      s.portLow,
-		"portHigh":     s.portHigh,
-		"egressOffset": s.egressOffset,
+		"host":           s.publicHost,
+		"portLow":        s.portLow,
+		"portHigh":       s.portHigh,
+		"egressOffset":   s.egressOffset,
+		"viewEnabled":    s.viewEnabled,
+		"serverTimeZone": serverTimeZone,
+		"idleRemoveMin":  s.relay.IdleRemoveMin(),
 	})
+}
+
+// handleViewStreams is the public read-only status endpoint used by the
+// infoscreen and DataMiner.
+func (s *server) handleViewStreams(w http.ResponseWriter, r *http.Request) {
+	streams := s.relay.ListStreams()
+	sort.Slice(streams, func(i, j int) bool { return streams[i].InPort < streams[j].InPort })
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(streams)
+}
+
+func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	for _, st := range s.relay.ListStreams() {
+		labels := fmt.Sprintf(`stream="%s",contact="%s",in_port="%d",out_port="%d"`,
+			st.Name, st.Contact, st.InPort, st.OutPort)
+		up := 0
+		if st.State == relay.StateRelaying {
+			up = 1
+		}
+		fmt.Fprintf(w, "srt_stream_up{%s} %d\n", labels, up)
+		fmt.Fprintf(w, "srt_stream_bitrate_kbps{%s} %g\n", labels, st.Stats.BitrateKbps)
+		fmt.Fprintf(w, "srt_stream_bytes_in_total{%s} %d\n", labels, st.Stats.BytesIn)
+		fmt.Fprintf(w, "srt_stream_bytes_out_total{%s} %d\n", labels, st.Stats.BytesOut)
+		fmt.Fprintf(w, "srt_stream_retransmitted_total{%s} %d\n", labels, st.Stats.Retransmitted)
+		fmt.Fprintf(w, "srt_stream_lost_total{%s} %d\n", labels, st.Stats.Lost)
+		fmt.Fprintf(w, "srt_stream_jitter_ms{%s} %d\n", labels, st.Stats.JitterMs)
+		fmt.Fprintf(w, "srt_stream_rtt_ms{%s} %g\n", labels, st.Stats.RTTMs)
+	}
 }
 
 // --- authentication handlers ---
@@ -311,13 +414,36 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/config", s.auth.requireAuth(s.handleConfig))
 	mux.HandleFunc("/api/streams", s.auth.requireAuth(s.handleListStreams))
 	mux.HandleFunc("/api/streams/add", s.auth.requireAuth(s.handleAddStream))
-	mux.HandleFunc("/api/streams/", s.auth.requireAuth(s.handleRemoveStream))
+	mux.HandleFunc("/api/streams/", s.auth.requireAuth(s.handleStreamPath))
 	mux.HandleFunc("/api/ports/free", s.auth.requireAuth(s.handleFreePorts))
 	mux.Handle("/ws", s.auth.requireWS(s.handleWS))
 
+	// Public read-only view (only when --view is enabled).
+	if s.viewEnabled {
+		mux.HandleFunc("/api/view/streams", s.handleViewStreams)
+		mux.HandleFunc("/metrics", s.handleMetrics)
+		mux.Handle("/ws/view", websocket.Handler(s.handleViewWS))
+	}
+
 	sub, _ := fs.Sub(webFS, "web")
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	fileServer := http.FileServer(http.FS(sub))
+	mux.Handle("/", fileServer)
+	if s.viewEnabled {
+		// Serve the same single-page UI for /view; the page renders read-only.
+		mux.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, sub, "index.html")
+		})
+	}
 	return mux
+}
+
+// handleStreamPath routes PATCH (edit) vs DELETE (remove) for /api/streams/{id}.
+func (s *server) handleStreamPath(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPatch {
+		s.handlePatchStream(w, r)
+		return
+	}
+	s.handleRemoveStream(w, r)
 }
 
 func generateStreamID(name string) string {
@@ -331,8 +457,11 @@ func generateStreamID(name string) string {
 	return clean
 }
 
-func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, publicHost string) {
-	s := newServer(r, auth, portLow, portHigh, egressOffset, publicHost)
+func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, publicHost string, viewEnabled bool) {
+	s := newServer(r, auth, portLow, portHigh, egressOffset, publicHost, viewEnabled)
 	log.Printf("web ui on http://%s", addr)
+	if viewEnabled {
+		log.Printf("read-only view enabled at http://%s/view", addr)
+	}
 	log.Fatal(http.ListenAndServe(addr, s.routes()))
 }

@@ -25,6 +25,20 @@ func (s *Stream) run(host string, latency int) {
 		default:
 		}
 
+		// Wait until the schedule says this stream is active.
+		s.mu.Lock()
+		active := s.active
+		s.mu.Unlock()
+		if !active {
+			s.setState(StateScheduled)
+			select {
+			case <-s.stopCh:
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+
 		s.setState(StateWaiting)
 
 		// Leg 1: sender OBS connects to ingress port.
@@ -40,6 +54,7 @@ func (s *Stream) run(host string, latency int) {
 			continue
 		}
 		s.logf("ingress accepted on %d", s.InPort)
+		s.touch()
 
 		// Leg 2: receiver OBS connects to egress port.
 		s.logf("accepting egress on port %d", s.OutPort)
@@ -147,6 +162,7 @@ func (s *Stream) pump(in, out *srtgo.SrtSocket, streamID string) {
 		if n <= 0 {
 			continue
 		}
+		s.touch()
 
 		// Sniff codecs from the first TS packets.
 		if !codecsFound {

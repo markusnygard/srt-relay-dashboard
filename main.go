@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"srt-relay-app/internal/relay"
 )
@@ -18,6 +19,9 @@ func main() {
 	egressOffset := flag.Int("egress-offset", 100, "egress port = ingress + offset")
 	publicHost := flag.String("host-ip", "", "IP advertised to senders/receivers in the web UI (auto-detected if empty)")
 	usersFile := flag.String("users", "users.json", "path to the users file")
+	streamsFile := flag.String("streams", "streams.json", "path to the streams/schedule file")
+	idleRemoveMin := flag.Int("idle-remove-min", 0, "remove streams with no publisher for this many minutes (0 = disabled)")
+	viewEnabled := flag.Bool("view", false, "enable the public read-only view page")
 	flag.Parse()
 
 	ip := *publicHost
@@ -35,17 +39,26 @@ func main() {
 	}
 	log.Printf("authentication enabled (users: %s)", *usersFile)
 
-	log.Printf("srt-relay-app starting: http=%s srt host=%s latency=%dms ports=%d-%d egress+%d",
-		*httpAddr, *host, *latency, *portLow, *portHigh, *egressOffset)
+	log.Printf("srt-relay-app starting: http=%s srt host=%s latency=%dms ports=%d-%d egress+%d view=%v",
+		*httpAddr, *host, *latency, *portLow, *portHigh, *egressOffset, *viewEnabled)
 
 	log.Printf("initializing SRT...")
 	r := relay.New(*host, *latency, nil)
 	log.Printf("SRT initialized")
 	defer relay.CleanupSRT()
 
+	r.ConfigurePersistence(*streamsFile, *idleRemoveMin)
+	if err := r.LoadStreams(); err != nil {
+		log.Printf("warning: failed to load streams: %v", err)
+	}
+	r.Start()
+
+	loc := time.Now().Location()
+	serverTimeZone = loc.String()
+
 	// Start with no streams; streams are added via the web UI.
 	log.Printf("starting web server on %s", *httpAddr)
-	startServer(r, auth, *httpAddr, *portLow, *portHigh, *egressOffset, ip)
+	startServer(r, auth, *httpAddr, *portLow, *portHigh, *egressOffset, ip, *viewEnabled)
 }
 
 // detectPublicIP finds a non-loopback IPv4 address of this host.
