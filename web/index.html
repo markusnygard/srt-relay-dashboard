@@ -54,23 +54,34 @@
   .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 
   /* Calendar */
-  .cal-head { display:grid; grid-template-columns:64px repeat(7,1fr); gap:2px; margin-bottom:4px; }
+  .cal-head { display:grid; grid-template-columns:64px repeat(7,1fr); gap:2px; margin-bottom:4px; position:sticky; top:0; background:var(--bg); z-index:5; }
   .cal-head div { text-align:center; font-size:12px; color:var(--muted); padding:6px 0; }
+  .cal-head .dayname { font-size:11px; font-weight:600; }
+  .cal-head .daynum { font-size:16px; font-weight:700; }
+  .cal-head .today-head .daynum { color:#fff; background:var(--accent); border-radius:50%; width:28px; height:28px; line-height:28px; display:inline-block; }
+  .cal-scroll { overflow-y:auto; max-height:calc(100vh - 220px); border:1px solid var(--border); border-radius:8px; }
   .cal-body { display:grid; grid-template-columns:64px repeat(7,1fr); gap:2px; }
-  .cal-hour { font-size:11px; color:var(--muted); text-align:right; padding-right:8px; padding-top:20px; height:56px; }
-  .cal-cell { background:var(--card); border:1px solid var(--border); border-radius:6px; height:56px; padding:2px; cursor:pointer; overflow:hidden; position:relative; }
+  .cal-hour { font-size:11px; color:var(--muted); text-align:right; padding-right:8px; padding-top:18px; height:48px; }
+  .cal-cell { background:var(--card); border:1px solid var(--border); border-radius:6px; height:48px; padding:2px; cursor:pointer; overflow:hidden; position:relative; }
   .cal-cell:hover { border-color:var(--accent); }
-  .cal-cell.today { border-color:var(--accent); }
+  .cal-cell.today { border-color:var(--accent); background:#1a2740; }
+  .cal-cell .nowline { position:absolute; left:0; right:0; height:2px; background:var(--red); z-index:2; }
+  .cal-cell .nowline::before { content:""; position:absolute; left:-3px; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--red); }
   .cal-event { background:#1d4ed8; border-radius:4px; color:#fff; font-size:11px; padding:2px 4px; margin-bottom:2px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .cal-event.waiting { background:#1e40af; }
   .cal-event.scheduled { background:#374151; }
   .cal-event.relaying { background:#15803d; }
-  .cal-event .live { display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; }
-  .cal-nav { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+  .cal-event .live { display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; animation:blink 1.2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+  .cal-nav { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
   .cal-nav span { font-weight:600; min-width:180px; }
+  .cal-nav .nowbtn { margin-left:auto; }
   .legend { display:flex; gap:16px; margin:12px 0; font-size:12px; color:var(--muted); flex-wrap:wrap; }
   .legend .lg { display:flex; align-items:center; gap:6px; }
   .legend .sw { width:14px; height:14px; border-radius:4px; display:inline-block; }
+  .legend .lg .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .legend .lg .status-dot.live { background:var(--green); animation:blink 1.2s infinite; }
+  .legend .lg .status-dot.idle { background:var(--gray); }
 </style>
 </head>
 <body>
@@ -123,18 +134,20 @@
       <button class="ghost" onclick="calShift(-7)">◀ Prev</button>
       <span id="calRange"></span>
       <button class="ghost" onclick="calShift(7)">Next ▶</button>
-      <button class="ghost" onclick="calToday()">Today</button>
+      <button class="ghost nowbtn" onclick="calNow()">Now</button>
     </div>
     <div class="legend">
-      <div class="lg"><span class="sw" style="background:#15803d"></span> live now</div>
+      <div class="lg"><span class="sw" style="background:#15803d"></span> event running</div>
       <div class="lg"><span class="sw" style="background:#1e40af"></span> waiting</div>
       <div class="lg"><span class="sw" style="background:#374151"></span> scheduled</div>
-      <div class="lg"><span class="sw" style="background:#1d4ed8"></span> event</div>
+      <div class="lg"><span class="sw" style="background:#1d4ed8"></span> no schedule</div>
+      <div class="lg"><span class="status-dot live"></span> stream is live now</div>
+      <div class="lg"><span class="status-dot idle"></span> no stream connected</div>
     </div>
-    <div class="cal-head">
-      <div></div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+    <div class="cal-scroll" id="calScroll">
+      <div class="cal-head" id="calHead"></div>
+      <div id="calGrid"></div>
     </div>
-    <div id="calGrid"></div>
   </div>
 </div>
 
@@ -328,7 +341,11 @@ function srtUrl(port, action, streamId){
 }
 
 function render(st){
-  const dot = healthDot(st.stats ? st.stats.health : "gray");
+  // Green pulsing dot when a stream is actually receiving, else the health light.
+  const live = st.state === "relaying";
+  const dot = live
+    ? `<span class="dot green" style="animation:blink 1.2s infinite"></span>`
+    : healthDot(st.stats ? st.stats.health : "gray");
   const codecs = (st.codecs||[]).map(c =>
     `<span class="badge ${c.type==="video"?"codec-v":"codec-a"}">${c.name}</span>`).join("");
   const bitrate = st.stats && st.stats.bitrateKbps>0 ? (st.stats.bitrateKbps/1000).toFixed(2)+" Mbps" : "—";
@@ -418,6 +435,7 @@ function fmtTimeOnly(ms){
 
 function calShift(days){ calStart.setDate(calStart.getDate()+days); renderCalendar(); }
 function calToday(){ calStart = startOfWeek(new Date()); renderCalendar(); }
+function calNow(){ calStart = startOfWeek(new Date()); renderCalendar(); }
 
 // Returns a stream's effective [start, stop) for a given week (absolute, best-effort display).
 function streamBlocks(st, weekStart){
@@ -484,13 +502,40 @@ function streamBlocks(st, weekStart){
 
 function renderCalendar(){
   const grid = el("calGrid");
+  const head = el("calHead");
   const range = el("calRange");
   const ws = calStart;
   const we = new Date(ws); we.setDate(we.getDate()+6);
   range.textContent = ws.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"}) + " – " + we.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"});
 
+  // Day headers (Google-Calendar style: weekday + date, today highlighted)
+  const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  let headHtml = `<div></div>`;
+  const now2 = new Date();
+  for(let day=0; day<7; day++){
+    const d = new Date(ws); d.setDate(d.getDate()+day);
+    const isToday = sameDay(d, now2);
+    const dayIdx = (d.getDay()+6)%7;
+    // live indicator in the header when any stream is relaying this day
+    const anyLive = streams.some(st => {
+      if(st.state !== "relaying") return false;
+      // scheduled/recurring: must be within an active block today
+      if(st.startAt || st.stopAt || st.recurrence){
+        return streamBlocks(st, ws).some(blk => blk.startMs <= now2.getTime() && (blk.stopMs === null || blk.stopMs > now2.getTime()));
+      }
+      // unscheduled (always-on) stream: live right now
+      return true;
+    });
+    const liveMark = (isToday && anyLive) ? `<span class="dot green" style="margin-left:4px"></span>` : "";
+    headHtml += `<div class="${isToday?"today-head":""}"><div class="dayname">${dayNames[dayIdx]}</div><div class="daynum">${d.getDate()}${liveMark}</div></div>`;
+  }
+  head.innerHTML = headHtml;
+
   const HOURS = Array.from({length:24}, (_,i)=>i);
   let html = "";
+  const now = new Date();
+  const nowHour = now.getHours() + now.getMinutes()/60;
+
   for(const h of HOURS){
     html += `<div class="cal-hour">${String(h).padStart(2,"0")}:00</div>`;
     for(let day=0; day<7; day++){
@@ -499,6 +544,7 @@ function renderCalendar(){
       const hourStart = cellMs + h*3600000;
       const hourEnd = hourStart + 3600000;
       let evHtml = "";
+      let liveStreamHere = false;
       for(const st of streams){
         for(const blk of streamBlocks(st, ws)){
           const b = Math.max(blk.startMs, hourStart);
@@ -506,18 +552,30 @@ function renderCalendar(){
           if(e <= b) continue;
           const inThisHour = b < hourEnd && e > hourStart;
           if(!inThisHour) continue;
-          const liveNow = isNowWithin(st, blk);
-          const cls = liveNow ? (st.state==="relaying"?"relaying":st.state==="scheduled"?"scheduled":"waiting") : "waiting";
+          const liveNow = isNowWithin(st, blk) && st.state === "relaying";
+          if(liveNow) liveStreamHere = true;
+          const cls = liveNow ? "relaying" : (st.state==="scheduled"?"scheduled":"waiting");
           const startLabel = blk.startMs === ws.getTime() ? "" : fmtTimeOnly(blk.startMs);
           const clickAttr = VIEW_MODE ? "" : `onclick="event.stopPropagation(); showDetails('${escapeHtml(st.streamId)}')"`;
           evHtml += `<div class="cal-event ${cls}" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} · ${fmtDTShort(new Date(blk.startMs))}" ${clickAttr}>${liveNow?'<span class="live"></span>':''}${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} ${startLabel}</div>`;
         }
       }
+      // Green "live" indicator on the current-day, current-hour cell when a stream is relaying
       const today = sameDay(new Date(), cellDate);
-      html += `<div class="cal-cell ${today?"today":""}" onclick="${VIEW_MODE?"":"openSchedule('','"+cellMs+"','"+hourStart+"')"}">${evHtml}</div>`;
+      let nowLine = "";
+      if(today && h === now.getHours()){
+        const topPct = (now.getMinutes()/60)*100;
+        nowLine = `<div class="nowline" style="top:${topPct}%"></div>`;
+      }
+      const liveBadge = (today && liveStreamHere) ? `<span class="dot green" style="position:absolute;top:2px;right:2px"></span>` : "";
+      html += `<div class="cal-cell ${today?"today":""}" onclick="${VIEW_MODE?"":"openSchedule('','"+cellMs+"','"+hourStart+"')"}">${nowLine}${liveBadge}${evHtml}</div>`;
     }
   }
   grid.innerHTML = html;
+
+  // Scroll to the current hour when first shown
+  const scroll = el("calScroll");
+  scroll.scrollTop = Math.max(0, (nowHour - 1) * 50);
 }
 
 function sameDay(a,b){
