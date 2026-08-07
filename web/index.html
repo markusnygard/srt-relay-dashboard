@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -23,6 +23,8 @@
   button.ghost { background:var(--card); border:1px solid var(--border); color:var(--text); }
   button.danger { background:#7f1d1d; }
   select, input { background:var(--card); color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:8px; font-size:14px; }
+  input[type="datetime-local"], input[type="date"] { color-scheme:dark; }
+  .time-sel { width:60px; text-align:center; padding:8px 4px; }
   table { width:100%; border-collapse:collapse; background:var(--card); border-radius:10px; overflow:hidden; }
   th, td { text-align:left; padding:12px 14px; border-bottom:1px solid var(--border); font-size:14px; }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
@@ -54,29 +56,36 @@
   .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 
   /* Calendar */
-  .cal-head { display:grid; grid-template-columns:64px repeat(7,1fr); gap:2px; margin-bottom:4px; position:sticky; top:0; background:var(--bg); z-index:5; }
-  .cal-head div { text-align:center; font-size:12px; color:var(--muted); padding:6px 0; }
-  .cal-head .dayname { font-size:11px; font-weight:600; }
-  .cal-head .daynum { font-size:16px; font-weight:700; }
-  .cal-head .today-head .daynum { color:#fff; background:var(--accent); border-radius:50%; width:28px; height:28px; line-height:28px; display:inline-block; }
+  .cal-head { display:grid; grid-template-columns:60px repeat(7,1fr); margin-bottom:4px; position:sticky; top:0; background:var(--bg); z-index:5; padding-bottom:8px; }
+  .cal-head div { text-align:center; font-size:12px; color:var(--muted); padding:4px 0; }
+  .cal-head .dayname { font-size:11px; font-weight:600; text-transform:uppercase; }
+  .cal-head .daynum { font-size:22px; font-weight:400; }
+  .cal-head .today-head .daynum { color:#fff; background:var(--accent); border-radius:50%; width:32px; height:32px; line-height:32px; display:inline-block; font-size:16px; }
   .cal-scroll { overflow-y:auto; max-height:calc(100vh - 220px); border:1px solid var(--border); border-radius:8px; }
-  .cal-body { display:grid; grid-template-columns:64px repeat(7,1fr); gap:2px; }
-  .cal-hour { font-size:11px; color:var(--muted); text-align:right; padding-right:8px; padding-top:18px; height:48px; }
-  .cal-cell { background:var(--card); border:1px solid var(--border); border-radius:6px; height:48px; padding:2px; cursor:pointer; overflow:hidden; position:relative; }
-  .cal-cell:hover { border-color:var(--accent); }
-  .cal-cell.today { border-color:var(--accent); background:#1a2740; }
-  .cal-cell .nowline { position:absolute; left:0; right:0; height:2px; background:var(--red); z-index:2; }
-  .cal-cell .nowline::before { content:""; position:absolute; left:-3px; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--red); }
-  .cal-event { background:#1d4ed8; border-radius:4px; color:#fff; font-size:11px; padding:2px 4px; margin-bottom:2px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .cal-event.waiting { background:#1e40af; }
-  .cal-event.scheduled { background:#374151; }
-  .cal-event.relaying { background:#15803d; }
-  .cal-event .live { display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; }
+  #calGrid { display:grid; grid-template-columns:60px repeat(7,1fr); }
+  .cal-time-col { }
+  .cal-hour { font-size:11px; color:var(--muted); text-align:right; padding-right:8px; height:48px; line-height:12px; position:relative; top:-6px; }
+  .cal-day-col { position:relative; border-left:1px solid var(--border); cursor:pointer; overflow:hidden; }
+  .cal-day-col.weekend { background:rgba(255,255,255,0.015); }
+  .cal-day-col.today { background:rgba(59,130,246,0.05); }
+  .cal-day-col .hour-line { position:absolute; left:0; right:0; height:1px; background:var(--border); opacity:0.3; pointer-events:none; }
+  .cal-event { position:absolute; border-radius:6px; overflow:hidden; cursor:pointer; color:#fff; padding:4px 6px; min-height:20px; z-index:1; }
+  .cal-event:hover { z-index:3; filter:brightness(1.12); box-shadow:0 4px 12px rgba(0,0,0,0.35); }
+  .cal-event .ev-title { font-weight:600; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.3; }
+  .cal-event .ev-time { font-size:10px; opacity:0.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cal-event .ev-contact { font-size:10px; opacity:0.55; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px; }
+  .cal-event.waiting { background:#1e3a5f; }
+  .cal-event.scheduled { background:#2d3038; }
+  .cal-event.relaying { background:#14532d; }
+  .cal-nowline { position:absolute; left:0; right:0; height:2px; background:var(--red); z-index:4; pointer-events:none; }
+  .cal-nowline::before { content:''; position:absolute; left:-5px; top:-4px; width:10px; height:10px; border-radius:50%; background:var(--red); }
   @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.3;} }
   .dot.pulse { animation:blink 1.2s infinite; }
   .cal-nav { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
   .cal-nav span { font-weight:600; min-width:180px; }
   .cal-nav .nowbtn { margin-left:auto; }
+  .cal-view-toggle { padding:4px 12px; font-size:13px; }
+  .cal-view-toggle.active { background:var(--accent); color:#fff; border-color:var(--accent); }
   .legend { display:flex; gap:16px; margin:12px 0; font-size:12px; color:var(--muted); flex-wrap:wrap; }
   .legend .lg { display:flex; align-items:center; gap:6px; }
   .legend .sw { width:14px; height:14px; border-radius:4px; display:inline-block; }
@@ -132,10 +141,12 @@
   <!-- Calendar tab -->
   <div id="viewCalendar" style="display:none">
     <div class="cal-nav">
-      <button class="ghost" onclick="calShift(-7)">◀ Prev</button>
+      <button class="ghost" onclick="calShift(-1)">◀</button>
+      <button class="ghost" onclick="calShift(1)">▶</button>
       <span id="calRange"></span>
-      <button class="ghost" onclick="calShift(7)">Next ▶</button>
-      <button class="ghost nowbtn" onclick="calNow()">Now</button>
+      <button class="ghost cal-view-toggle" id="calToggleDay" onclick="setCalView('day')">Day</button>
+      <button class="ghost cal-view-toggle active" id="calToggleWeek" onclick="setCalView('week')">Week</button>
+      <button class="ghost nowbtn" onclick="calNow()">Today</button>
     </div>
     <div class="legend">
       <div class="lg"><span class="dot gray"></span> no ingress</div>
@@ -186,15 +197,19 @@
       <div class="field"><label>Contact</label><input id="schContact" type="text"></div>
       <div class="field"><label>Ingress port</label><select id="schPort"></select></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <div class="field" style="flex:1"><label>Start (leave empty = now)</label><input id="schStart" type="datetime-local"></div>
-        <div class="field" style="flex:1"><label>Stop (leave empty = manual)</label><input id="schStop" type="datetime-local"></div>
+        <div class="field" style="flex:1"><label>Start (leave empty = now)</label>
+          <div style="display:flex;gap:4px;align-items:center"><input id="schStartDate" type="date" style="flex:1"><select id="schStartHour" class="time-sel"></select><span>:</span><select id="schStartMin" class="time-sel"></select></div>
+        </div>
+        <div class="field" style="flex:1"><label>Stop (leave empty = manual)</label>
+          <div style="display:flex;gap:4px;align-items:center"><input id="schStopDate" type="date" style="flex:1"><select id="schStopHour" class="time-sel"></select><span>:</span><select id="schStopMin" class="time-sel"></select></div>
+        </div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <div class="field"><label>Recurrence</label>
           <select id="schRecur"><option value="">None</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
         </div>
         <div class="field" style="display:flex;align-items:center;gap:6px">
-          <input id="schAuto" type="checkbox" style="width:auto"> <label>Auto-remove after stop</label>
+          <input id="schAuto" type="checkbox" style="width:auto" checked> <label>Auto-remove after stop</label>
         </div>
       </div>
       <div class="hint" id="schTimesHint"></div>
@@ -251,7 +266,7 @@ function showApp(){
   el("loginView").style.display="none"; el("appView").style.display="block";
   el("whoAmI").textContent = CURRENT_USER ? "Signed in as "+CURRENT_USER : "";
   if(CONFIG.serverTimeZone) el("serverTz").textContent = "Server timezone: "+CONFIG.serverTimeZone;
-  loadConfig(); loadPorts(); refresh(); connectWS();
+  loadConfig(); loadPorts(); refresh(); connectWS(); populateTimeSelects();
 }
 
 async function doLogin(){
@@ -336,7 +351,7 @@ async function addStream(){
     await api("/api/streams/add", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({name, inPort, contact})
+      body: JSON.stringify({name, inPort, contact, autoRemove: true})
     });
   } catch(e){ alert(e.message); return; }
   el("nameInput").value=""; el("contactInput").value="";
@@ -424,6 +439,8 @@ function closeDetails(){ el("detailsModal").classList.remove("open"); }
 // --- scheduling / calendar ---
 
 let calStart = startOfWeek(new Date());
+let calView = "week";
+let calDay = new Date();
 
 function startOfWeek(d){
   const x = new Date(d);
@@ -450,9 +467,25 @@ function fmtTimeOnly(ms){
   return new Date(ms).toLocaleTimeString([], TIME_OPTS);
 }
 
-function calShift(days){ calStart.setDate(calStart.getDate()+days); renderCalendar(); }
-function calToday(){ calStart = startOfWeek(new Date()); renderCalendar(); }
-function calNow(){ calStart = startOfWeek(new Date()); renderCalendar(); }
+function calShift(dir){
+  if(calView === "day"){
+    calDay.setDate(calDay.getDate() + (dir > 0 ? 1 : -1));
+  } else {
+    calStart.setDate(calStart.getDate() + (dir > 0 ? 7 : -7));
+  }
+  renderCalendar();
+}
+function calNow(){
+  calStart = startOfWeek(new Date());
+  renderCalendar();
+}
+function setCalView(v){
+  calView = v;
+  el("calToggleDay").classList.toggle("active", v==="day");
+  el("calToggleWeek").classList.toggle("active", v==="week");
+  if(v === "day") calDay = new Date();
+  renderCalendar();
+}
 
 // Returns a stream's effective [start, stop) for a given week (absolute, best-effort display).
 function streamBlocks(st, weekStart){
@@ -521,81 +554,155 @@ function renderCalendar(){
   const grid = el("calGrid");
   const head = el("calHead");
   const range = el("calRange");
-  const ws = calStart;
-  const we = new Date(ws); we.setDate(we.getDate()+6);
-  range.textContent = ws.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"}) + " – " + we.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"});
-
-  // Day headers (Google-Calendar style: weekday + date, today highlighted)
+  const PX_PER_HOUR = 48;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+  let numDays, startOfFirstDay, weekStart, targetDayIdx;
+  if(calView === "day"){
+    numDays = 1;
+    calDay.setHours(0,0,0,0);
+    startOfFirstDay = calDay.getTime();
+    targetDayIdx = (calDay.getDay()+6)%7;
+    weekStart = new Date(calDay);
+    weekStart.setDate(weekStart.getDate() - targetDayIdx);
+    weekStart.setHours(0,0,0,0);
+    range.textContent = calDay.toLocaleDateString([], {weekday:"long", day:"numeric", month:"short", year:"numeric"});
+  } else {
+    numDays = 7;
+    startOfFirstDay = calStart.getTime();
+    weekStart = calStart;
+    targetDayIdx = -1;
+    const we = new Date(calStart); we.setDate(we.getDate()+6);
+    range.textContent = calStart.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"}) + " – " + we.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"});
+  }
+
+  // Day headers
   let headHtml = `<div></div>`;
-  const now2 = new Date();
-  for(let day=0; day<7; day++){
-    const d = new Date(ws); d.setDate(d.getDate()+day);
-    const isToday = sameDay(d, now2);
+  for(let day=0; day<numDays; day++){
+    const d = new Date(startOfFirstDay + day*86400000);
+    const isToday = sameDay(d, now);
     const dayIdx = (d.getDay()+6)%7;
-    // live indicator in the header when any stream is relaying this day
-    const anyLive = streams.some(st => {
-      if(st.state !== "relaying") return false;
-      // scheduled/recurring: must be within an active block today
-      if(st.startAt || st.stopAt || st.recurrence){
-        return streamBlocks(st, ws).some(blk => blk.startMs <= now2.getTime() && (blk.stopMs === null || blk.stopMs > now2.getTime()));
-      }
-      // unscheduled (always-on) stream: live right now
-      return true;
-    });
-    const anyProblems = streams.some(st => st.state === "relaying" && st.stats && (st.stats.health === "red" || st.stats.health === "yellow"));
-    const liveMark = (isToday && anyLive) ? (anyProblems ? `<span class="dot red pulse" style="margin-left:4px"></span>` : `<span class="dot green" style="margin-left:4px"></span>`) : "";
-    headHtml += `<div class="${isToday?"today-head":""}"><div class="dayname">${dayNames[dayIdx]}</div><div class="daynum">${d.getDate()}${liveMark}</div></div>`;
+    headHtml += `<div class="${isToday?"today-head":""}"><div class="dayname">${dayNames[dayIdx]}</div><div class="daynum">${d.getDate()}</div></div>`;
   }
   head.innerHTML = headHtml;
 
-  const HOURS = Array.from({length:24}, (_,i)=>i);
-  let html = "";
-  const now = new Date();
-  const nowHour = now.getHours() + now.getMinutes()/60;
+  // Set grid columns (day: 60px + 1fr, week: 60px + 7×1fr)
+  grid.style.gridTemplateColumns = `60px repeat(${numDays}, 1fr)`;
 
-  for(const h of HOURS){
-    html += `<div class="cal-hour">${String(h).padStart(2,"0")}:00</div>`;
-    for(let day=0; day<7; day++){
-      const cellDate = new Date(ws); cellDate.setDate(cellDate.getDate()+day);
-      const cellMs = cellDate.getTime();
-      const hourStart = cellMs + h*3600000;
-      const hourEnd = hourStart + 3600000;
-      let evHtml = "";
-      let liveStreamHere = false;
-      for(const st of streams){
-        for(const blk of streamBlocks(st, ws)){
-          const b = Math.max(blk.startMs, hourStart);
-          const e = blk.stopMs === null ? hourEnd : Math.min(blk.stopMs, hourEnd);
-          if(e <= b) continue;
-          const inThisHour = b < hourEnd && e > hourStart;
-          if(!inThisHour) continue;
-          const liveNow = isNowWithin(st, blk) && st.state === "relaying";
-          if(liveNow) liveStreamHere = true;
-          const cls = liveNow ? "relaying" : (st.state==="scheduled"?"scheduled":"waiting");
-          const startLabel = blk.startMs === ws.getTime() ? "" : fmtTimeOnly(blk.startMs);
-          const clickAttr = VIEW_MODE ? "" : `onclick="event.stopPropagation(); showDetails('${escapeHtml(st.streamId)}')"`;
-          const tl = trafficLight(st);
-          const name = liveNow ? `<b>${escapeHtml(st.name)}</b>` : escapeHtml(st.name);
-          evHtml += `<div class="cal-event ${cls}" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""} · ${fmtDTShort(new Date(blk.startMs))}" ${clickAttr}>${tl}${name}${st.contact?" · "+escapeHtml(st.contact):""} ${startLabel}</div>`;
+  // Collect events
+  const WEEK_END = weekStart.getTime() + 7*86400000;
+  const dayEvents = Array.from({length:numDays}, () => []);
+  for(const st of streams){
+    for(const blk of streamBlocks(st, weekStart)){
+      const startD = new Date(blk.startMs);
+      let dayIdx = (startD.getDay()+6)%7;
+      if(calView === "day"){
+        if(dayIdx !== targetDayIdx) continue;
+        dayIdx = 0;
+      }
+      if(dayIdx < 0 || dayIdx >= numDays) continue;
+      const dayEndMs = weekStart.getTime() + dayIdx*86400000 + 86400000;
+      dayEvents[dayIdx].push({
+        stream:st, block:blk,
+        startMs:blk.startMs,
+        stopMs:blk.stopMs || Math.min(dayEndMs, WEEK_END)
+      });
+    }
+  }
+
+  // Greedy lane assignment for overlapping events
+  function resolveOverlaps(events){
+    events.sort((a,b) => a.startMs - b.startMs);
+    const lanes = [];
+    for(const ev of events){
+      let placed = false;
+      for(let i=0; i<lanes.length; i++){
+        if(lanes[i] <= ev.startMs){
+          ev.colIdx = i;
+          lanes[i] = ev.stopMs;
+          placed = true;
+          break;
         }
       }
-      // Green "live" indicator on the current-day, current-hour cell when a stream is relaying
-      const today = sameDay(new Date(), cellDate);
-      let nowLine = "";
-      if(today && h === now.getHours()){
-        const topPct = (now.getMinutes()/60)*100;
-        nowLine = `<div class="nowline" style="top:${topPct}%"></div>`;
+      if(!placed){
+        ev.colIdx = lanes.length;
+        lanes.push(ev.stopMs);
       }
-      const liveBadge = (today && liveStreamHere) ? `<span class="dot green" style="position:absolute;top:2px;right:2px"></span>` : "";
-      html += `<div class="cal-cell ${today?"today":""}" onclick="${VIEW_MODE?"":"openSchedule('','"+cellMs+"','"+hourStart+"')"}">${nowLine}${liveBadge}${evHtml}</div>`;
     }
+    const colCount = lanes.length || 1;
+    for(const ev of events) ev.colCount = colCount;
+  }
+  for(let d=0; d<numDays; d++) resolveOverlaps(dayEvents[d]);
+
+  // Render grid
+  let html = `<div class="cal-time-col">`;
+  for(let h=0; h<24; h++){
+    html += `<div class="cal-hour">${String(h).padStart(2,"0")}:00</div>`;
+  }
+  html += `</div>`;
+
+  for(let day=0; day<numDays; day++){
+    const d = new Date(startOfFirstDay + day*86400000);
+    const isToday = sameDay(d, now);
+    const isWeekend = d.getDay()===0 || d.getDay()===6;
+    const dayMs = d.getTime();
+    const dayEndMs = dayMs + 86400000;
+    let cls = "cal-day-col";
+    if(isToday) cls += " today";
+    if(isWeekend) cls += " weekend";
+    html += `<div class="${cls}" style="height:${24*PX_PER_HOUR}px" onclick="${VIEW_MODE?"":"openSchedule('','"+dayMs+"','"+dayMs+"')"}">`;
+
+    // Hour separator lines
+    for(let h=1; h<24; h++){
+      html += `<div class="hour-line" style="top:${h*PX_PER_HOUR}px"></div>`;
+    }
+
+    // Events
+    for(const ev of dayEvents[day]){
+      const st = ev.stream;
+      const blk = ev.block;
+      const startDate = new Date(Math.max(ev.startMs, dayMs));
+      const stopDate = new Date(ev.stopMs);
+      const startMin = startDate.getHours() * 60 + startDate.getMinutes();
+      let stopMin = stopDate.getHours() * 60 + stopDate.getMinutes();
+      if(stopDate.getTime() > dayEndMs) stopMin = 24*60;
+      const topPx = startMin / 60 * PX_PER_HOUR;
+      let endPx = stopMin / 60 * PX_PER_HOUR;
+      if(endPx - topPx < 20) endPx = topPx + 20;
+      const gridH = 24 * PX_PER_HOUR;
+      if(endPx > gridH) endPx = gridH;
+      const heightPx = endPx - topPx;
+
+      const liveNow = isNowWithin(st, blk) && st.state === "relaying";
+      const cls2 = liveNow ? "relaying" : (st.state==="scheduled"?"scheduled":"waiting");
+      const tl = trafficLight(st);
+      const clickAttr = VIEW_MODE ? "" : `onclick="event.stopPropagation(); showDetails('${escapeHtml(st.streamId)}')"`;
+      const startLabel = fmtTimeOnly(ev.startMs);
+      const stopLabel = fmtTimeOnly(ev.stopMs);
+
+      const cols = ev.colCount || 1;
+      const col = ev.colIdx || 0;
+      html += `<div class="cal-event ${cls2}" style="top:${topPx}px; height:${heightPx}px; left:${col/cols*100+1}%; width:${100/cols-2}%;" title="${escapeHtml(st.name)}${st.contact?" · "+escapeHtml(st.contact):""}" ${clickAttr}>
+        <div class="ev-title">${tl}${escapeHtml(st.name)}</div>
+        <div class="ev-time">${startLabel} – ${stopLabel}</div>
+        ${st.contact ? `<div class="ev-contact">${escapeHtml(st.contact)}</div>` : ""}
+      </div>`;
+    }
+
+    // Now line on today's column
+    if(isToday){
+      const nowPx = nowMinutes / 60 * PX_PER_HOUR;
+      html += `<div class="cal-nowline" style="top:${nowPx}px"></div>`;
+    }
+
+    html += `</div>`;
   }
   grid.innerHTML = html;
 
-  // Scroll to the current hour when first shown
   const scroll = el("calScroll");
-  scroll.scrollTop = Math.max(0, (nowHour - 1) * 50);
+  scroll.scrollTop = Math.max(0, (nowMinutes/60 - 1) * PX_PER_HOUR);
 }
 
 function sameDay(a,b){
@@ -646,13 +753,17 @@ function openSchedule(idOrName, cellMs, hourStart){
   el("schName").value = st ? st.name : "";
   el("schContact").value = st ? (st.contact||"") : "";
   el("schRecur").value = st ? (st.recurrence||"") : "";
-  el("schAuto").checked = st ? !!st.autoRemove : false;
-  if(st && st.startAt) el("schStart").value = toLocalInput(st.startAt); else el("schStart").value = "";
-  if(st && st.stopAt) el("schStop").value = toLocalInput(st.stopAt); else el("schStop").value = "";
+  el("schAuto").checked = st ? !!st.autoRemove : true;
+  if(st && st.startAt) { el("schStartDate").value = toDatePart(st.startAt); el("schStartHour").value = toHours(st.startAt); el("schStartMin").value = toMins(st.startAt); }
+  else { el("schStartDate").value = ""; el("schStartHour").value = ""; el("schStartMin").value = ""; }
+  if(st && st.stopAt) { el("schStopDate").value = toDatePart(st.stopAt); el("schStopHour").value = toHours(st.stopAt); el("schStopMin").value = toMins(st.stopAt); }
+  else { el("schStopDate").value = ""; el("schStopHour").value = ""; el("schStopMin").value = ""; }
   // prefill time from a clicked cell (day start + hour)
   if(!st && hourStart){
     const d = new Date(parseInt(hourStart));
-    el("schStart").value = toLocalInput(d.toISOString());
+    el("schStartDate").value = toDatePart(d.toISOString());
+    el("schStartHour").value = toHours(d.toISOString());
+    el("schStartMin").value = toMins(d.toISOString());
   }
   el("schPort").value = st ? String(st.inPort) : "";
   // store editing id
@@ -661,16 +772,33 @@ function openSchedule(idOrName, cellMs, hourStart){
   el("scheduleModal").classList.add("open");
 }
 
-function toLocalInput(iso){
+function toDatePart(iso){
   const d = new Date(iso);
   const p = n=>String(n).padStart(2,"0");
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+}
+function toHours(iso){
+  return String(new Date(iso).getHours()).padStart(2,"0");
+}
+function toMins(iso){
+  const m = Math.round(new Date(iso).getMinutes()/5)*5;
+  return String(Math.min(m,55)).padStart(2,"0");
+}
+function populateTimeSelects(){
+  const hh = Array.from({length:24}, (_,i)=>String(i).padStart(2,"0"));
+  const mm = Array.from({length:12}, (_,i)=>String(i*5).padStart(2,"0"));
+  for(const id of ["schStartHour","schStopHour"]){
+    el(id).innerHTML = '<option value="">--</option>' + hh.map(h=>`<option value="${h}">${h}</option>`).join("");
+  }
+  for(const id of ["schStartMin","schStopMin"]){
+    el(id).innerHTML = '<option value="">--</option>' + mm.map(m=>`<option value="${m}">${m}</option>`).join("");
+  }
 }
 
 function renderScheduleHint(){
   // show server timezone hint
   const tz = CONFIG.serverTimeZone;
-  el("schTimesHint").textContent = "Times are shown in your local timezone"+(tz?" (server: "+tz+")":"")+". The server stores and acts on the absolute instant.";
+  el("schTimesHint").textContent = "Times are in 24-hour format"+(tz?" (server timezone: "+tz+")":"")+". The server stores and acts on the absolute instant.";
 }
 
 function closeSchedule(){ el("scheduleModal").classList.remove("open"); }
@@ -679,8 +807,12 @@ async function saveSchedule(){
   const name = el("schName").value.trim();
   const contact = el("schContact").value.trim();
   const inPort = parseInt(el("schPort").value,10);
-  const startVal = el("schStart").value;
-  const stopVal = el("schStop").value;
+  const startDate = el("schStartDate").value;
+  const startHour = el("schStartHour").value;
+  const startMin = el("schStartMin").value;
+  const stopDate = el("schStopDate").value;
+  const stopHour = el("schStopHour").value;
+  const stopMin = el("schStopMin").value;
   const rec = el("schRecur").value;
   const auto = el("schAuto").checked;
   const editId = el("scheduleModal").dataset.editId;
@@ -689,8 +821,8 @@ async function saveSchedule(){
   if(!inPort && !editId){ alert("Select a port"); return; }
   const body = {
     name, contact, inPort, recurrence: rec, autoRemove: auto,
-    startAt: startVal ? new Date(startVal).toISOString() : null,
-    stopAt: stopVal ? new Date(stopVal).toISOString() : null,
+    startAt: (startDate && startHour !== "" && startMin !== "") ? new Date(startDate + "T" + startHour + ":" + startMin).toISOString() : null,
+    stopAt: (stopDate && stopHour !== "" && stopMin !== "") ? new Date(stopDate + "T" + stopHour + ":" + stopMin).toISOString() : null,
   };
   try {
     if(editId){

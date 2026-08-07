@@ -36,10 +36,12 @@ func (r *Relay) tick() {
 		s.mu.Lock()
 		active := s.isActiveNowLocked()
 
-		// One-off auto-remove: stop time passed and autoRemove set.
+		// One-off auto-remove: stop time passed 15+ min ago, stream idle, and autoRemove set.
 		remove := false
-		if s.AutoRemove && s.Recurrence == "" && s.StopAt != nil && !now.Before(*s.StopAt) {
-			remove = true
+		if s.AutoRemove && s.Recurrence == "" && s.StopAt != nil && !now.Before(s.StopAt.Add(15*time.Minute)) {
+			if s.State != StateRelaying {
+				remove = true
+			}
 		}
 
 		// Idle cleanup: manual streams (no schedule) with no publisher recently.
