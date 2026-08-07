@@ -92,6 +92,19 @@
   .legend .lg .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
   .legend .lg .status-dot.live { background:var(--green); }
   .legend .lg .status-dot.idle { background:var(--gray); }
+
+  /* Infoscreen view mode */
+  body.view-mode { overflow:hidden; }
+  body.view-mode .topbar,
+  body.view-mode > .app > h1,
+  body.view-mode > .app > .sub,
+  body.view-mode > .app > .tabs { display:none !important; }
+  body.view-mode .app { padding:0; max-width:none; }
+  body.view-mode .cal-nav { padding:6px 16px 2px; margin:0; }
+  body.view-mode .legend { padding:0 16px 4px; margin:0; }
+  body.view-mode .cal-scroll { max-height:calc(100vh - 88px); border:none; border-radius:0; }
+  body.view-mode .cal-head { top:0; }
+  body.view-mode .cal-day-col.weekend { background:rgba(255,255,255,0.02); }
 </style>
 </head>
 <body>
@@ -928,15 +941,20 @@ function connectWS(){
 }
 
 if(VIEW_MODE){
-  // Public infoscreen: skip login, go straight to calendar
+  document.body.classList.add("view-mode");
   el("loginView").style.display = "none";
   el("appView").style.display = "block";
   el("viewStreams").style.display = "none";
   el("viewCalendar").style.display = "block";
   el("tabStreams").style.display = "none";
   el("tabCalendar").style.display = "none";
-  el("whoAmI").textContent = "Read-only view";
   loadConfig(); refresh(); connectWS(); renderCalendar();
+  // Auto-scroll to "now" every 60 seconds (infoscreen follow)
+  setInterval(() => {
+    const m = new Date().getHours() * 60 + new Date().getMinutes();
+    const scroll = el("calScroll");
+    if(scroll) scroll.scrollTop = Math.max(0, (m/60 - 1) * 48);
+  }, 60000);
 } else {
   checkSession();
 }
