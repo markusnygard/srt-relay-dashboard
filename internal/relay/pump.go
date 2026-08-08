@@ -3,6 +3,7 @@ package relay
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/haivision/srtgo"
@@ -94,10 +95,14 @@ func (s *Stream) run(host string, latency int) {
 			s.mu.Unlock()
 			s.update()
 
-			// Leg 2: receiver connects to a persistent egress listener.
-			outSock, oerr := s.acceptEgress(host, s.OutPort, options, inSock)
-			if oerr != nil {
-				s.logf("egress accept error on %d: %v", s.OutPort, oerr)
+			// Only treat ingress as the publisher leg; grab its streamid.
+			streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
+
+			// Persistent egress listener accepts any number of readers and
+			// broadcasts every ingress chunk to all of them (fan-out).
+			outListener, err := s.newListener(host, s.OutPort, options)
+			if err != nil {
+				s.logf("egress listen error on %d: %v", s.OutPort, err)
 				inSock.Close()
 				s.mu.Lock()
 				s.IngressConnected = false
@@ -111,29 +116,28 @@ func (s *Stream) run(host string, latency int) {
 				}
 				continue
 			}
-			s.logf("egress accepted on %d", s.OutPort)
 
-			// Clear the probe deadline so the pump's reads don't instantly
-			// time out (zero time = no deadline).
-			inSock.SetReadDeadline(time.Time{})
-
-			// Only treat ingress as the publisher leg; grab its streamid.
-			streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
+			readers := &egressFanout{socks: make(map[*srtgo.SrtSocket]struct{})}
+			stopRead := make(chan struct{})
+			readDone := make(chan struct{})
+			go s.acceptReaders(outListener, readers, stopRead, readDone)
 
 			s.mu.Lock()
 			s.State = StateRelaying
 			s.ConnectedAt = time.Now()
 			s.Codecs = nil
 			s.Stats = Stats{Health: HealthGreen}
-			s.EgressConnected = true
 			s.mu.Unlock()
 			s.update()
 
-			// Pump ingress -> egress while sniffing TS for codecs.
-			s.pump(inSock, outSock, streamID)
+			// Pump ingress -> all egress readers while sniffing TS for codecs.
+			s.pump(inSock, readers, streamID)
 
+			close(stopRead)
+			<-readDone
+			outListener.Close()
+			readers.closeAll()
 			inSock.Close()
-			outSock.Close()
 
 			// Reset to waiting so the dashboard no longer shows relaying
 			// after the publisher/reader disconnect.
@@ -163,22 +167,62 @@ func (s *Stream) newListener(host string, port int, options map[string]string) (
 	return sock, nil
 }
 
-// acceptEgress creates a persistent egress listener and accepts one reader.
-// It aborts if the stream is stopped/deactivated or if the publisher
-// (ingress socket) has gone away while we wait for a reader.
-func (s *Stream) acceptEgress(host string, port int, options map[string]string, inSock *srtgo.SrtSocket) (*srtgo.SrtSocket, error) {
-	listener, err := s.newListener(host, port, options)
-	if err != nil {
-		return nil, err
-	}
-	defer listener.Close()
+// egressFanout tracks every connected reader and broadcasts to them all.
+type egressFanout struct {
+	mu    sync.Mutex
+	socks map[*srtgo.SrtSocket]struct{}
+}
 
-	probeBuf := make([]byte, 1400)
+func (e *egressFanout) add(s *srtgo.SrtSocket) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.socks[s] = struct{}{}
+}
+
+// write sends b to every reader, dropping any that have gone away.
+// Returns the number of bytes written to readers.
+func (e *egressFanout) write(b []byte) int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var written int64
+	for s := range e.socks {
+		if _, err := s.Write(b); err != nil {
+			s.Close()
+			delete(e.socks, s)
+			continue
+		}
+		written += int64(len(b))
+	}
+	return written
+}
+
+func (e *egressFanout) count() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.socks)
+}
+
+func (e *egressFanout) closeAll() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for s := range e.socks {
+		s.Close()
+	}
+	e.socks = make(map[*srtgo.SrtSocket]struct{})
+}
+
+// acceptReaders accepts any number of readers on the egress port until the
+// stream stops or the pump tears down (publisher gone). It does NOT read
+// the ingress socket — the pump handles liveness detection exclusively.
+func (s *Stream) acceptReaders(listener *srtgo.SrtSocket, readers *egressFanout, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 
 	for {
 		select {
+		case <-stop:
+			return
 		case <-s.stopCh:
-			return nil, fmt.Errorf("stopped")
+			return
 		default:
 		}
 
@@ -186,39 +230,30 @@ func (s *Stream) acceptEgress(host string, port int, options map[string]string, 
 		active := s.active
 		s.mu.Unlock()
 		if !active {
-			return nil, fmt.Errorf("deactivated")
+			return
 		}
 
-		// Probe the publisher socket: a short read forces SRT to notice a
-		// lost peer (SockState alone stays CONNECTED because nothing polls
-		// the socket during the wait). A deadline timeout means "alive but
-		// idle"; any other error means the publisher is gone.
-		inSock.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		n, rerr := inSock.Read(probeBuf)
-		if rerr != nil {
-			if !isTimeout(rerr) {
-				return nil, fmt.Errorf("publisher gone: %v", rerr)
-			}
-		} else if n > 0 {
-			s.touch()
-		}
-		if inSock.SockState() != srtgo.SRTS_CONNECTED {
-			return nil, fmt.Errorf("publisher gone (state %d)", inSock.SockState())
-		}
-
-		s.logf("accepting egress on port %d", port)
+		s.logf("accepting egress on port %d", s.OutPort)
 		listener.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		conn, _, aerr := listener.Accept()
 		if aerr != nil {
+			if isTimeout(aerr) {
+				continue
+			}
 			select {
-			case <-s.stopCh:
-				return nil, fmt.Errorf("stopped")
-			case <-time.After(100 * time.Millisecond):
+			case <-stop:
+				return
+			case <-time.After(50 * time.Millisecond):
 			}
 			continue
 		}
 		conn.SetPollTimeout(1 * time.Second)
-		return conn, nil
+		readers.add(conn)
+		s.mu.Lock()
+		s.EgressConnected = true
+		s.mu.Unlock()
+		s.update()
+		s.logf("egress accepted on %d (readers=%d)", s.OutPort, readers.count())
 	}
 }
 
@@ -229,7 +264,7 @@ func isTimeout(err error) bool {
 	return errors.As(err, &t) && t.Timeout()
 }
 
-func (s *Stream) pump(in, out *srtgo.SrtSocket, streamID string) {
+func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID string) {
 	buf := make([]byte, 1400)
 	parser := newTSParser()
 	codecsFound := false
@@ -295,11 +330,12 @@ func (s *Stream) pump(in, out *srtgo.SrtSocket, streamID string) {
 			}
 		}
 
-		if _, err := out.Write(buf[:n]); err != nil {
-			return
-		}
+		written := readers.write(buf[:n])
 		s.mu.Lock()
-		s.Stats.BytesOut += int64(n)
+		s.Stats.BytesOut += written
+		if readers.count() == 0 {
+			s.EgressConnected = false
+		}
 		s.mu.Unlock()
 	}
 }
