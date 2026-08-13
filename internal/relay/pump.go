@@ -281,6 +281,13 @@ func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID strin
 		case <-s.stopCh:
 			return
 		case <-statsTicker.C:
+			s.mu.Lock()
+			active := s.active
+			s.mu.Unlock()
+			if !active {
+				return
+			}
+
 			st, err := in.Stats()
 			if err != nil {
 				continue

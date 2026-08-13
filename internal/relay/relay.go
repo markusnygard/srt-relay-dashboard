@@ -49,6 +49,11 @@ const (
 	HealthGray   Health = "gray"
 )
 
+// scheduleStopGrace is the grace period after a stream's StopAt before it is
+// deactivated and (if autoRemove is set) removed, so the tail of a broadcast
+// is not cut off at the exact scheduled stop time.
+const scheduleStopGrace = 1 * time.Minute
+
 // Stream is one configured relay (ingress port -> egress port).
 type Stream struct {
 	mu sync.Mutex
@@ -294,7 +299,7 @@ func (s *Stream) isActiveNowLocked() bool {
 		if s.StartAt != nil && now.Before(*s.StartAt) {
 			return false
 		}
-		if s.StopAt != nil && !now.Before(*s.StopAt) {
+		if s.StopAt != nil && !now.Before(s.StopAt.Add(scheduleStopGrace)) {
 			return false
 		}
 		return true
@@ -309,7 +314,7 @@ func (s *Stream) isActiveNowLocked() bool {
 	if s.StopAt != nil {
 		stopB = latestOccurrence(*s.StopAt, s.Recurrence == "weekly", time.Local, now)
 	}
-	return startB.After(stopB)
+	return startB.After(stopB.Add(scheduleStopGrace))
 }
 
 // latestOccurrence returns the most recent time matching base's clock time
