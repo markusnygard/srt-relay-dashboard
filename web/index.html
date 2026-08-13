@@ -375,9 +375,9 @@ async function addStream(){
 async function removeStream(id){
   if(!confirm("Remove this stream?")) return;
   try { await api("/api/streams/"+encodeURIComponent(id), {method:"DELETE"}); }
-  catch(e){ alert(e.message); }
+  catch(e){ alert(e.message); return; }
+  await refresh();
   await loadPorts();
-  renderAll();
 }
 
 function srtUrl(port, action, streamId){
