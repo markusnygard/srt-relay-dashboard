@@ -143,6 +143,12 @@
       <button onclick="addStream()">Add stream</button>
       <button class="ghost" onclick="loadPorts()">Refresh ports</button>
     </div>
+    <div class="legend">
+      <div class="lg"><span class="dot gray"></span> no ingress</div>
+      <div class="lg"><span class="dot yellow"></span> ingress OK, no egress</div>
+      <div class="lg"><span class="dot green"></span> ingress + egress OK</div>
+      <div class="lg"><span class="dot red pulse"></span> ingress problems</div>
+    </div>
     <table>
       <thead>
         <tr><th>Health</th><th>Stream</th><th>Contact</th><th>StreamID</th><th>Sender URL</th><th>Receiver URL</th><th>Codecs</th><th>Bitrate</th><th></th></tr>
