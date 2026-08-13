@@ -14,6 +14,8 @@ const packetSize = 1316
 func (s *Stream) run(host string, latency int) {
 	defer close(s.stopped)
 
+	s.latency = latency
+
 	options := map[string]string{
 		"transtype": "live",
 		"mode":      "listener",
@@ -302,7 +304,7 @@ func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID strin
 				Lost:          int64(st.PktRcvLoss),
 				JitterMs:      int64(st.MsRcvTsbPdDelay),
 				RTTMs:         st.MsRTT,
-				Health:        evaluateHealth(bitrate, st, s.Stats.BitrateKbps),
+				Health:        evaluateHealth(bitrate, st, s.Stats.BitrateKbps, s.latency),
 			}
 			s.mu.Unlock()
 			s.update()

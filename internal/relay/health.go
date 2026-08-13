@@ -3,9 +3,14 @@ package relay
 import "github.com/haivision/srtgo"
 
 // evaluateHealth computes a color-coded health based on bitrate stability,
-// packet loss and buffer delay (jitter). A stream that has never delivered
-// data or has lost the connection stays gray/red.
-func evaluateHealth(bitrateKbps float64, st *srtgo.SrtStats, prevBitrate float64) Health {
+// packet loss and buffer delay. A stream that has never delivered data or has
+// lost the connection stays gray/red.
+//
+// MsRcvTsbPdDelay (the TSBPD buffer delay) is normally ~= the configured SRT
+// latency, so it is only treated as a problem when it significantly exceeds
+// that baseline — a sign the receiver buffer is growing (congestion), not a
+// healthy link.
+func evaluateHealth(bitrateKbps float64, st *srtgo.SrtStats, prevBitrate float64, latency int) Health {
 	if st == nil {
 		return HealthGray
 	}
@@ -19,9 +24,8 @@ func evaluateHealth(bitrateKbps float64, st *srtgo.SrtStats, prevBitrate float64
 	lossRate := float64(st.PktRcvLoss) / float64(max(st.PktRecv, 1))
 	retransRate := float64(st.PktRcvRetrans) / float64(max(st.PktRecv, 1))
 
-	// TSBPD buffer delay is the jitter proxy: how far behind real-time the
-	// receiver is. Growing delay = network trouble.
-	delay := int64(st.MsRcvTsbPdDelay)
+	// How far the buffer delay exceeds the configured latency.
+	excessDelay := int64(st.MsRcvTsbPdDelay) - int64(latency)
 
 	// Big sudden drop vs the previous sample.
 	drop := 0.0
@@ -29,10 +33,10 @@ func evaluateHealth(bitrateKbps float64, st *srtgo.SrtStats, prevBitrate float64
 		drop = (prevBitrate - bitrateKbps) / prevBitrate
 	}
 
-	if lossRate > 0.01 || retransRate > 0.02 || delay > 1000 || drop > 0.8 {
+	if lossRate > 0.01 || retransRate > 0.02 || excessDelay > 1000 || drop > 0.8 {
 		return HealthRed
 	}
-	if lossRate > 0.001 || retransRate > 0.005 || delay > 300 || drop > 0.4 {
+	if lossRate > 0.001 || retransRate > 0.005 || excessDelay > 300 || drop > 0.4 {
 		return HealthYellow
 	}
 	return HealthGreen

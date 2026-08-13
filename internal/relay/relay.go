@@ -76,6 +76,7 @@ type Stream struct {
 	// internal
 	active       bool
 	lastActivity time.Time
+	latency      int
 
 	stopCh   chan struct{}
 	stopped  chan struct{}
