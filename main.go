@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +20,7 @@ func main() {
 	portLow := flag.Int("port-low", 21001, "lowest available ingress port")
 	portHigh := flag.Int("port-high", 21100, "highest available ingress port")
 	egressOffset := flag.Int("egress-offset", 100, "egress port = ingress + offset")
+	portsFile := flag.String("ports-file", "", "path to a JSON file listing allowed ingress ports (overrides --port-low/--port-high)")
 	publicHost := flag.String("host-ip", "", "IP advertised to senders/receivers in the web UI (auto-detected if empty)")
 	usersFile := flag.String("users", "users.json", "path to the users file")
 	streamsFile := flag.String("streams", "streams.json", "path to the streams/schedule file")
@@ -42,6 +46,16 @@ func main() {
 	log.Printf("srt-relay-app starting: http=%s srt host=%s latency=%dms ports=%d-%d egress+%d view=%v",
 		*httpAddr, *host, *latency, *portLow, *portHigh, *egressOffset, *viewEnabled)
 
+	// Optional explicit port list from a config file.
+	var allowedPorts []int
+	if *portsFile != "" {
+		allowedPorts, err = loadPortList(*portsFile)
+		if err != nil {
+			log.Fatalf("failed to load ports file: %v", err)
+		}
+		log.Printf("using %d allowed ingress ports from %s", len(allowedPorts), *portsFile)
+	}
+
 	log.Printf("initializing SRT...")
 	r := relay.New(*host, *latency, nil)
 	log.Printf("SRT initialized")
@@ -58,7 +72,30 @@ func main() {
 
 	// Start with no streams; streams are added via the web UI.
 	log.Printf("starting web server on %s", *httpAddr)
-	startServer(r, auth, *httpAddr, *portLow, *portHigh, *egressOffset, ip, *viewEnabled)
+	startServer(r, auth, *httpAddr, *portLow, *portHigh, *egressOffset, allowedPorts, ip, *viewEnabled)
+}
+
+// loadPortList reads a JSON file of allowed ingress port numbers.
+func loadPortList(path string) ([]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var ports []int
+	if err := json.Unmarshal(data, &ports); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	seen := map[int]bool{}
+	for _, p := range ports {
+		if p < 1 || p > 65535 {
+			return nil, fmt.Errorf("invalid port %d in %s", p, path)
+		}
+		if seen[p] {
+			return nil, fmt.Errorf("duplicate port %d in %s", p, path)
+		}
+		seen[p] = true
+	}
+	return ports, nil
 }
 
 // detectPublicIP finds a non-loopback IPv4 address of this host.

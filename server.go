@@ -32,11 +32,12 @@ type server struct {
 	portLow      int
 	portHigh     int
 	egressOffset int
+	allowedPorts []int // nil = use portLow..portHigh range
 	publicHost   string
 	viewEnabled  bool
 }
 
-func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, publicHost string, viewEnabled bool) *server {
+func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, allowedPorts []int, publicHost string, viewEnabled bool) *server {
 	s := &server{
 		relay:        r,
 		auth:         auth,
@@ -45,6 +46,7 @@ func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffse
 		portLow:      portLow,
 		portHigh:     portHigh,
 		egressOffset: egressOffset,
+		allowedPorts: allowedPorts,
 		publicHost:   publicHost,
 		viewEnabled:  viewEnabled,
 	}
@@ -161,8 +163,8 @@ func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "port already in use", http.StatusConflict)
 		return
 	}
-	if req.InPort < s.portLow || req.InPort > s.portHigh {
-		http.Error(w, fmt.Sprintf("ingress port must be %d-%d", s.portLow, s.portHigh), http.StatusBadRequest)
+	if !s.portAllowed(req.InPort) {
+		http.Error(w, "ingress port not in the configured port list", http.StatusBadRequest)
 		return
 	}
 
@@ -222,13 +224,35 @@ func (s *server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleFreePorts(w http.ResponseWriter, r *http.Request) {
 	var free []int
-	for p := s.portLow; p <= s.portHigh; p++ {
+	for _, p := range s.portCandidates() {
 		if !s.relay.PortClaimed(p) && !s.relay.PortClaimed(p+s.egressOffset) {
 			free = append(free, p)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(free)
+}
+
+// portCandidates returns the ingress ports the UI may offer.
+func (s *server) portCandidates() []int {
+	if len(s.allowedPorts) > 0 {
+		return s.allowedPorts
+	}
+	var ports []int
+	for p := s.portLow; p <= s.portHigh; p++ {
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+// portAllowed reports whether an ingress port is within the configured set.
+func (s *server) portAllowed(p int) bool {
+	for _, a := range s.portCandidates() {
+		if a == p {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -474,8 +498,8 @@ func generateStreamID(name string) string {
 	return clean
 }
 
-func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, publicHost string, viewEnabled bool) {
-	s := newServer(r, auth, portLow, portHigh, egressOffset, publicHost, viewEnabled)
+func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, allowedPorts []int, publicHost string, viewEnabled bool) {
+	s := newServer(r, auth, portLow, portHigh, egressOffset, allowedPorts, publicHost, viewEnabled)
 	log.Printf("web ui on http://%s", addr)
 	if viewEnabled {
 		log.Printf("read-only view enabled at http://%s/view", addr)
