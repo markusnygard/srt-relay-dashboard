@@ -1,12 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +20,7 @@ func main() {
 	portLow := flag.Int("port-low", 21001, "lowest available ingress port")
 	portHigh := flag.Int("port-high", 21100, "highest available ingress port")
 	egressOffset := flag.Int("egress-offset", 100, "egress port = ingress + offset")
-	portsFile := flag.String("ports-file", "", "path to a JSON file listing allowed ingress ports (overrides --port-low/--port-high)")
+	portsFile := flag.String("ports-file", "", "path to a text file listing ingress-egress port pairs, one per line or comma-separated (overrides --port-low/--port-high/--egress-offset)")
 	publicHost := flag.String("host-ip", "", "IP advertised to senders/receivers in the web UI (auto-detected if empty)")
 	usersFile := flag.String("users", "users.json", "path to the users file")
 	streamsFile := flag.String("streams", "streams.json", "path to the streams/schedule file")
@@ -46,14 +46,14 @@ func main() {
 	log.Printf("srt-relay-app starting: http=%s srt host=%s latency=%dms ports=%d-%d egress+%d view=%v",
 		*httpAddr, *host, *latency, *portLow, *portHigh, *egressOffset, *viewEnabled)
 
-	// Optional explicit port list from a config file.
-	var allowedPorts []int
+	// Optional explicit port pairs from a config file.
+	var portPairs []portPair
 	if *portsFile != "" {
-		allowedPorts, err = loadPortList(*portsFile)
+		portPairs, err = loadPortPairs(*portsFile)
 		if err != nil {
 			log.Fatalf("failed to load ports file: %v", err)
 		}
-		log.Printf("using %d allowed ingress ports from %s", len(allowedPorts), *portsFile)
+		log.Printf("using %d port pairs from %s", len(portPairs), *portsFile)
 	}
 
 	log.Printf("initializing SRT...")
@@ -72,30 +72,40 @@ func main() {
 
 	// Start with no streams; streams are added via the web UI.
 	log.Printf("starting web server on %s", *httpAddr)
-	startServer(r, auth, *httpAddr, *portLow, *portHigh, *egressOffset, allowedPorts, ip, *viewEnabled)
+	startServer(r, auth, *httpAddr, *portLow, *portHigh, *egressOffset, portPairs, ip, *viewEnabled)
 }
 
-// loadPortList reads a JSON file of allowed ingress port numbers.
-func loadPortList(path string) ([]int, error) {
+// loadPortPairs reads a text file of ingress-egress port pairs. Entries may be
+// separated by newlines or commas, e.g. "23001-23101, 23002-23102".
+func loadPortPairs(path string) ([]portPair, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var ports []int
-	if err := json.Unmarshal(data, &ports); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
+	var pairs []portPair
 	seen := map[int]bool{}
-	for _, p := range ports {
-		if p < 1 || p > 65535 {
-			return nil, fmt.Errorf("invalid port %d in %s", p, path)
+	for _, tok := range strings.FieldsFunc(string(data), func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ' ' || r == '\t'
+	}) {
+		parts := strings.Split(tok, "-")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid entry %q in %s (want ingress-egress)", tok, path)
 		}
-		if seen[p] {
-			return nil, fmt.Errorf("duplicate port %d in %s", p, path)
+		in, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+		out, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("invalid port in %q in %s", tok, path)
 		}
-		seen[p] = true
+		if in < 1 || in > 65535 || out < 1 || out > 65535 {
+			return nil, fmt.Errorf("invalid port in %q in %s", tok, path)
+		}
+		if seen[in] {
+			return nil, fmt.Errorf("duplicate ingress port %d in %s", in, path)
+		}
+		seen[in] = true
+		pairs = append(pairs, portPair{In: in, Out: out})
 	}
-	return ports, nil
+	return pairs, nil
 }
 
 // detectPublicIP finds a non-loopback IPv4 address of this host.

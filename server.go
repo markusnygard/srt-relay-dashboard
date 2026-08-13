@@ -32,12 +32,18 @@ type server struct {
 	portLow      int
 	portHigh     int
 	egressOffset int
-	allowedPorts []int // nil = use portLow..portHigh range
+	portPairs    []portPair // nil = derive from range + offset
 	publicHost   string
 	viewEnabled  bool
 }
 
-func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, allowedPorts []int, publicHost string, viewEnabled bool) *server {
+// portPair maps one ingress port to its egress port.
+type portPair struct {
+	In  int `json:"in"`
+	Out int `json:"out"`
+}
+
+func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffset int, portPairs []portPair, publicHost string, viewEnabled bool) *server {
 	s := &server{
 		relay:        r,
 		auth:         auth,
@@ -46,7 +52,7 @@ func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffse
 		portLow:      portLow,
 		portHigh:     portHigh,
 		egressOffset: egressOffset,
-		allowedPorts: allowedPorts,
+		portPairs:    portPairs,
 		publicHost:   publicHost,
 		viewEnabled:  viewEnabled,
 	}
@@ -159,17 +165,18 @@ func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
-	if s.relay.PortClaimed(req.InPort) || s.relay.PortClaimed(req.InPort+s.egressOffset) {
-		http.Error(w, "port already in use", http.StatusConflict)
+	outPort, ok := s.egressFor(req.InPort)
+	if !ok {
+		http.Error(w, "ingress port not in the configured port list", http.StatusBadRequest)
 		return
 	}
-	if !s.portAllowed(req.InPort) {
-		http.Error(w, "ingress port not in the configured port list", http.StatusBadRequest)
+	if s.relay.PortClaimed(req.InPort) || s.relay.PortClaimed(outPort) {
+		http.Error(w, "port already in use", http.StatusConflict)
 		return
 	}
 
 	streamID := generateStreamID(req.Name)
-	st := s.relay.AddStream(req.Name, streamID, req.InPort, req.InPort+s.egressOffset,
+	st := s.relay.AddStream(req.Name, streamID, req.InPort, outPort,
 		req.StartAt, req.StopAt, req.Recurrence, req.AutoRemove, req.Contact)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(st)
@@ -223,36 +230,36 @@ func (s *server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleFreePorts(w http.ResponseWriter, r *http.Request) {
-	var free []int
-	for _, p := range s.portCandidates() {
-		if !s.relay.PortClaimed(p) && !s.relay.PortClaimed(p+s.egressOffset) {
-			free = append(free, p)
+	var free []portPair
+	for _, pp := range s.portCandidates() {
+		if !s.relay.PortClaimed(pp.In) && !s.relay.PortClaimed(pp.Out) {
+			free = append(free, pp)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(free)
 }
 
-// portCandidates returns the ingress ports the UI may offer.
-func (s *server) portCandidates() []int {
-	if len(s.allowedPorts) > 0 {
-		return s.allowedPorts
+// portCandidates returns the ingress/egress pairs the UI may offer.
+func (s *server) portCandidates() []portPair {
+	if len(s.portPairs) > 0 {
+		return s.portPairs
 	}
-	var ports []int
+	var pairs []portPair
 	for p := s.portLow; p <= s.portHigh; p++ {
-		ports = append(ports, p)
+		pairs = append(pairs, portPair{In: p, Out: p + s.egressOffset})
 	}
-	return ports
+	return pairs
 }
 
-// portAllowed reports whether an ingress port is within the configured set.
-func (s *server) portAllowed(p int) bool {
-	for _, a := range s.portCandidates() {
-		if a == p {
-			return true
+// egressFor returns the egress port for an ingress port, or ok=false.
+func (s *server) egressFor(in int) (int, bool) {
+	for _, pp := range s.portCandidates() {
+		if pp.In == in {
+			return pp.Out, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +269,7 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"portLow":        s.portLow,
 		"portHigh":       s.portHigh,
 		"egressOffset":   s.egressOffset,
+		"portPairs":      s.portCandidates(),
 		"viewEnabled":    s.viewEnabled,
 		"serverTimeZone": serverTimeZone,
 		"idleRemoveMin":  s.relay.IdleRemoveMin(),
@@ -498,8 +506,8 @@ func generateStreamID(name string) string {
 	return clean
 }
 
-func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, allowedPorts []int, publicHost string, viewEnabled bool) {
-	s := newServer(r, auth, portLow, portHigh, egressOffset, allowedPorts, publicHost, viewEnabled)
+func startServer(r *relay.Relay, auth *authManager, addr string, portLow, portHigh, egressOffset int, portPairs []portPair, publicHost string, viewEnabled bool) {
+	s := newServer(r, auth, portLow, portHigh, egressOffset, portPairs, publicHost, viewEnabled)
 	log.Printf("web ui on http://%s", addr)
 	if viewEnabled {
 		log.Printf("read-only view enabled at http://%s/view", addr)

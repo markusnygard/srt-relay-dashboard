@@ -254,8 +254,8 @@ export LD_LIBRARY_PATH=$(pwd)
 | `--latency` | `1000` | SRT latency in ms (raise for lossy links) |
 | `--port-low` | `21001` | lowest available ingress port (ignored when `--ports-file` is set) |
 | `--port-high` | `21100` | highest available ingress port (ignored when `--ports-file` is set) |
-| `--egress-offset` | `100` | egress port = ingress + offset |
-| `--ports-file` | (unset) | path to a JSON file listing the allowed ingress ports, e.g. `[23001, 23003, 23005]`. When set, only these ports are offered/valid; the range flags are ignored. |
+| `--egress-offset` | `100` | egress port = ingress + offset (ignored when `--ports-file` is set) |
+| `--ports-file` | (unset) | path to a text file listing `ingress-egress` port pairs, e.g. `23001-23101, 23002-23102`. When set, only these pairs are offered/valid and the range/offset flags are ignored. |
 | `--host-ip` | auto | IP shown to senders/receivers in the web UI (auto-detected if empty; set it if the relay is behind NAT or has multiple NICs) |
 | `--users` | `users.json` | path to the users file (created with `admin/admin` on first run) |
 | `--streams` | `streams.json` | path to the streams/schedule file (persisted across restarts) |
