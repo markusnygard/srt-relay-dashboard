@@ -99,7 +99,8 @@ type Relay struct {
 	persistFile   string
 	idleRemoveMin int
 
-	stopCh chan struct{}
+	onRemove func(id string)
+	stopCh   chan struct{}
 }
 
 // New creates a relay manager. onChange is invoked on every stream update.
@@ -208,6 +209,9 @@ func (r *Relay) RemoveStream(id string) {
 		close(s.stopCh)
 		<-s.stopped
 		r.persist()
+		if r.onRemove != nil {
+			r.onRemove(id)
+		}
 	}
 }
 
@@ -249,6 +253,13 @@ func (r *Relay) SetOnChange(fn func(*Stream)) {
 	for _, s := range r.streams {
 		s.onChange = fn
 	}
+}
+
+// SetOnRemove sets the callback invoked whenever a stream is removed.
+func (r *Relay) SetOnRemove(fn func(id string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onRemove = fn
 }
 
 // CleanupSRT shuts down the SRT library.

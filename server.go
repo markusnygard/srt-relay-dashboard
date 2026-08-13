@@ -49,7 +49,24 @@ func newServer(r *relay.Relay, auth *authManager, portLow, portHigh, egressOffse
 		viewEnabled:  viewEnabled,
 	}
 	r.SetOnChange(s.broadcast)
+	r.SetOnRemove(s.broadcastRemove)
 	return s
+}
+
+func (s *server) broadcastRemove(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, _ := json.Marshal(map[string]any{"type": "removed", "id": id})
+	for c := range s.clients {
+		if _, err := c.Write(data); err != nil {
+			delete(s.clients, c)
+		}
+	}
+	for c := range s.viewClients {
+		if _, err := c.Write(data); err != nil {
+			delete(s.viewClients, c)
+		}
+	}
 }
 
 func (s *server) broadcast(st *relay.Stream) {

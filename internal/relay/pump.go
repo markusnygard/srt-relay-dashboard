@@ -76,8 +76,12 @@ func (s *Stream) run(host string, latency int) {
 			}
 
 			s.logf("accepting ingress on port %d", s.InPort)
+			inListener.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			inSock, _, err := inListener.Accept()
 			if err != nil {
+				if isTimeout(err) {
+					continue
+				}
 				// transient accept error: keep listening, brief pause
 				select {
 				case <-s.stopCh:

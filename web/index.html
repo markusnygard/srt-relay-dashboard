@@ -936,6 +936,12 @@ function connectWS(){
   ws.onmessage = (e)=>{
     try {
       let m = JSON.parse(e.data);
+      if(m.type === "removed"){
+        streams = streams.filter(s=>s.streamId !== m.id);
+        renderAll();
+        if(el("viewCalendar").style.display !== "none") renderCalendar();
+        return;
+      }
       let st = m.type==="stream" ? m.stream : m;
       const i = streams.findIndex(s=>s.streamId===st.streamId);
       if(i>=0){ streams[i] = st; } else { streams.push(st); }
