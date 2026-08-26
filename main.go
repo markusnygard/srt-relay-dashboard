@@ -16,7 +16,7 @@ import (
 func main() {
 	httpAddr := flag.String("http", "0.0.0.0:3001", "web ui listen address")
 	host := flag.String("host", "0.0.0.0", "SRT bind host")
-	latency := flag.Int("latency", 1000, "SRT latency in ms")
+	latency := flag.Int("latency", 200, "SRT latency in ms")
 	portLow := flag.Int("port-low", 21001, "lowest available ingress port")
 	portHigh := flag.Int("port-high", 21100, "highest available ingress port")
 	egressOffset := flag.Int("egress-offset", 100, "egress port = ingress + offset")
