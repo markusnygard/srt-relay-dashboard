@@ -80,9 +80,17 @@ type Stream struct {
 	EgressConnected  bool        `json:"egressConnected"`  // reader connected
 
 	// internal
+	r            *Relay
 	active       bool
 	lastActivity time.Time
 	latency      int
+
+	// persistent egress (readers) side, open while the stream is active
+	egressListener *srtgo.SrtSocket
+	egressReaders  *egressFanout
+	egressStop     chan struct{}
+	egressDone     chan struct{}
+	egressOpen     bool
 
 	stopCh   chan struct{}
 	stopped  chan struct{}
@@ -184,6 +192,7 @@ func (r *Relay) AddStream(name, streamID string, inPort, outPort int, startAt, s
 		stopCh:     make(chan struct{}),
 		stopped:    make(chan struct{}),
 		onChange:   r.onChange,
+		r:          r,
 	}
 	s.active = s.isActiveNowLocked()
 	r.streams[id] = s
@@ -221,6 +230,25 @@ func (r *Relay) GetStream(id string) *Stream {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.streams[id]
+}
+
+// findByStreamID returns the stream whose streamId or name matches sid. This is
+// used to route ingress connections by the sender's SRT streamid.
+func (r *Relay) findByStreamID(sid string) *Stream {
+	if sid == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s := r.streams[sid]; s != nil {
+		return s
+	}
+	for _, s := range r.streams {
+		if s.Name == sid {
+			return s
+		}
+	}
+	return nil
 }
 
 // ListStreams returns all streams.

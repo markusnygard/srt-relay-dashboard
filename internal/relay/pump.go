@@ -34,6 +34,7 @@ func (s *Stream) run(host string, latency int) {
 		active := s.active
 		s.mu.Unlock()
 		if !active {
+			s.closeEgress()
 			s.setState(StateScheduled)
 			select {
 			case <-s.stopCh:
@@ -58,11 +59,24 @@ func (s *Stream) run(host string, latency int) {
 			continue
 		}
 
+		// Persistent egress listener: readers may connect at any time while
+		// the stream is active, independent of any single sender session.
+		if !s.openEgress(host, options) {
+			inListener.Close()
+			select {
+			case <-s.stopCh:
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+
 		// Accept loop on the same ingress listener until deactivated/stopped.
 		for {
 			select {
 			case <-s.stopCh:
 				inListener.Close()
+				s.closeEgress()
 				return
 			default:
 			}
@@ -72,6 +86,7 @@ func (s *Stream) run(host string, latency int) {
 			s.mu.Unlock()
 			if !active {
 				inListener.Close()
+				s.closeEgress()
 				break
 			}
 
@@ -86,6 +101,7 @@ func (s *Stream) run(host string, latency int) {
 				select {
 				case <-s.stopCh:
 					inListener.Close()
+					s.closeEgress()
 					return
 				case <-time.After(500 * time.Millisecond):
 				}
@@ -95,69 +111,125 @@ func (s *Stream) run(host string, latency int) {
 			s.touch()
 			inSock.SetPollTimeout(1 * time.Second)
 
-			s.mu.Lock()
-			s.IngressConnected = true
-			s.EgressConnected = false
-			s.mu.Unlock()
-			s.update()
-
-			// Only treat ingress as the publisher leg; grab its streamid.
+			// Route by the sender's streamid to the matching stream, or
+			// reject the sender if no stream matches.
 			streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
-
-			// Persistent egress listener accepts any number of readers and
-			// broadcasts every ingress chunk to all of them (fan-out).
-			outListener, err := s.newListener(host, s.OutPort, options)
-			if err != nil {
-				s.logf("egress listen error on %d: %v", s.OutPort, err)
-				inSock.Close()
-				s.mu.Lock()
-				s.IngressConnected = false
-				s.mu.Unlock()
-				s.update()
-				select {
-				case <-s.stopCh:
-					inListener.Close()
-					return
-				case <-time.After(500 * time.Millisecond):
-				}
-				continue
-			}
-
-			readers := &egressFanout{socks: make(map[*srtgo.SrtSocket]struct{})}
-			stopRead := make(chan struct{})
-			readDone := make(chan struct{})
-			go s.acceptReaders(outListener, readers, stopRead, readDone)
-
-			s.mu.Lock()
-			s.State = StateRelaying
-			s.ConnectedAt = time.Now()
-			s.Codecs = nil
-			s.PayloadType = ""
-			s.Stats = Stats{Health: HealthGreen}
-			s.mu.Unlock()
-			s.update()
-
-			// Pump ingress -> all egress readers while sniffing TS for codecs.
-			s.pump(inSock, readers, streamID)
-
-			close(stopRead)
-			<-readDone
-			outListener.Close()
-			readers.closeAll()
-			inSock.Close()
-
-			// Reset to waiting so the dashboard no longer shows relaying
-			// after the publisher/reader disconnect.
-			s.mu.Lock()
-			s.State = StateWaiting
-			s.Codecs = nil
-			s.PayloadType = ""
-			s.Stats = Stats{}
-			s.IngressConnected = false
-			s.EgressConnected = false
-			s.mu.Unlock()
-			s.update()
+			s.handleIngress(inSock, streamID)
 		}
+	}
+}
+
+// handleIngress accepts one sender and routes it to the stream whose
+// streamId/name matches the sender's streamid, relaying to that stream's
+// egress port regardless of which ingress port the sender connected to.
+// Senders whose streamid matches no stream are rejected. A missing streamid
+// falls back to the port-owning stream.
+func (s *Stream) handleIngress(inSock *srtgo.SrtSocket, streamID string) {
+	name := cleanStreamID(streamID)
+	target := s
+	if name != "" {
+		target = s.r.findByStreamID(name)
+		if target == nil {
+			s.logf("rejecting ingress: streamid %q matches no stream", streamID)
+			inSock.Close()
+			return
+		}
+	}
+	fanout, ok := target.egress()
+	if !ok {
+		s.logf("rejecting ingress for %q: target stream not active", name)
+		inSock.Close()
+		return
+	}
+	target.startRelay(inSock, fanout)
+}
+
+// startRelay marks the target stream relaying and pumps the ingress socket to
+// its egress fanout until the sender disconnects.
+func (t *Stream) startRelay(inSock *srtgo.SrtSocket, fanout *egressFanout) {
+	t.mu.Lock()
+	t.State = StateRelaying
+	t.ConnectedAt = time.Now()
+	t.IngressConnected = true
+	t.EgressConnected = fanout.count() > 0
+	t.Codecs = nil
+	t.PayloadType = ""
+	t.Stats = Stats{Health: HealthGreen}
+	t.mu.Unlock()
+	t.update()
+
+	t.pump(inSock, fanout)
+	inSock.Close()
+
+	// Reset so the dashboard no longer shows relaying after the publisher
+	// disconnects.
+	t.mu.Lock()
+	t.State = StateWaiting
+	t.Codecs = nil
+	t.PayloadType = ""
+	t.Stats = Stats{}
+	t.IngressConnected = false
+	t.EgressConnected = fanout.count() > 0
+	t.mu.Unlock()
+	t.update()
+}
+
+// egress returns the stream's persistent egress fanout if open.
+func (s *Stream) egress() (*egressFanout, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.egressOpen || s.egressReaders == nil {
+		return nil, false
+	}
+	return s.egressReaders, true
+}
+
+// openEgress creates the stream's persistent egress listener and starts
+// accepting readers until the stream deactivates or stops.
+func (s *Stream) openEgress(host string, options map[string]string) bool {
+	ls, err := s.newListener(host, s.OutPort, options)
+	if err != nil {
+		s.logf("egress listen error on %d: %v", s.OutPort, err)
+		return false
+	}
+	readers := &egressFanout{socks: make(map[*srtgo.SrtSocket]struct{})}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	s.mu.Lock()
+	s.egressListener = ls
+	s.egressReaders = readers
+	s.egressStop = stop
+	s.egressDone = done
+	s.egressOpen = true
+	s.mu.Unlock()
+	go s.acceptReaders(ls, readers, stop, done)
+	return true
+}
+
+// closeEgress tears down the persistent egress listener and fanout.
+func (s *Stream) closeEgress() {
+	s.mu.Lock()
+	ls := s.egressListener
+	readers := s.egressReaders
+	stop := s.egressStop
+	done := s.egressDone
+	open := s.egressOpen
+	s.egressOpen = false
+	s.egressListener = nil
+	s.egressReaders = nil
+	s.mu.Unlock()
+	if !open {
+		return
+	}
+	readers.closeAll()
+	if stop != nil {
+		close(stop)
+	}
+	if ls != nil {
+		ls.Close()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -272,7 +344,7 @@ func isTimeout(err error) bool {
 	return errors.As(err, &t) && t.Timeout()
 }
 
-func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID string) {
+func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout) {
 	buf := make([]byte, 1400)
 	sniffer := newPayloadSniffer()
 
