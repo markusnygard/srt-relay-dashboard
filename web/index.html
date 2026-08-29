@@ -151,7 +151,7 @@
     </div>
     <table>
       <thead>
-        <tr><th>Health</th><th>Stream</th><th>Contact</th><th>StreamID</th><th>Sender URL</th><th>Receiver URL</th><th>Codecs</th><th>Format</th><th>Bitrate</th><th></th></tr>
+        <tr><th>Health</th><th>Time</th><th>Stream</th><th>Contact</th><th>StreamID</th><th>Sender URL</th><th>Receiver URL</th><th>Codecs</th><th>Format</th><th>Bitrate</th><th></th></tr>
       </thead>
       <tbody id="rows"></tbody>
     </table>
@@ -438,6 +438,21 @@ function formatLabel(st){
   return "—";
 }
 
+// Start/stop times as HH:MM (no date). Missing times show as "—".
+function schedTime(st){
+  const t = (iso, fmt) => iso ? fmtTimeOnly(new Date(iso)) : "—";
+  return `${t(st.startAt)} – ${t(st.stopAt)}`;
+}
+
+// Streams sorted by full start time (date included); unscheduled last.
+function sortedStreams(){
+  return [...streams].sort((a,b) => {
+    const ta = a.startAt ? new Date(a.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+    const tb = b.startAt ? new Date(b.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+    return ta - tb;
+  });
+}
+
 function render(st){
   const dot = trafficLight(st);
   const codecs = (st.codecs||[]).map(c =>
@@ -451,6 +466,7 @@ function render(st){
     : `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`);
   return `<tr>
     <td>${dot}</td>
+    <td><span class="state">${schedTime(st)}</span></td>
     <td><b>${escapeHtml(st.name)}</b><br><span class="state">${st.state}</span></td>
     <td>${escapeHtml(st.contact||"")}</td>
     <td><code>${sid}</code></td>
@@ -465,7 +481,7 @@ function render(st){
 
 function renderAll(){
   if(VIEW_MODE) return;
-  el("rows").innerHTML = streams.length ? streams.map(render).join("") : '<tr><td colspan="10" class="empty">No streams. Add one above.</td></tr>';
+  el("rows").innerHTML = streams.length ? sortedStreams().map(render).join("") : '<tr><td colspan="11" class="empty">No streams. Add one above.</td></tr>';
 }
 
 function showDetails(id){
