@@ -110,12 +110,27 @@ func (p *tsParser) feed(data []byte) {
 			for pos+5 <= end {
 				streamType := int(pkt[pos])
 				elementaryPID := int(pkt[pos+1]&0x1F)<<8 | int(pkt[pos+2])
-				if name, ok := codecNames[streamType]; ok {
-					c := Codec{Type: codecTypeFor(streamType), Name: name, PID: elementaryPID}
+				esInfoLen := int(pkt[pos+3]&0x0F)<<8 | int(pkt[pos+4])
+				esInfoStart := pos + 5
+				esInfoEnd := esInfoStart + esInfoLen
+				if esInfoEnd > tsPacketSize {
+					esInfoEnd = tsPacketSize
+				}
+
+				name, ok := codecNames[streamType]
+				ctype := codecTypeFor(streamType)
+				// AV1 is signaled as private data (0x06) with a registration
+				// descriptor carrying the "AV01" fourcc.
+				if streamType == 0x06 && descriptorHasFourCC(pkt, esInfoStart, esInfoEnd, "AV01") {
+					name = "AV1"
+					ctype = "video"
+					ok = true
+				}
+				if ok {
+					c := Codec{Type: ctype, Name: name, PID: elementaryPID}
 					p.found[elementaryPID] = c
 				}
-				esInfoLen := int(pkt[pos+3]&0x0F)<<8 | int(pkt[pos+4])
-				pos += 5 + esInfoLen
+				pos = esInfoEnd
 			}
 			if len(p.found) > 0 {
 				p.pmtFound = true
@@ -148,4 +163,25 @@ func indexByte(b []byte, c byte) int {
 		}
 	}
 	return -1
+}
+
+// descriptorHasFourCC scans MPEG-TS descriptors in [start,end) for a
+// registration descriptor (tag 0x05) whose 4-byte format_identifier matches
+// fourcc (e.g. "AV01").
+func descriptorHasFourCC(pkt []byte, start, end int, fourcc string) bool {
+	for start+2 <= end {
+		dlen := int(pkt[start+1])
+		dstart := start + 2
+		dend := dstart + dlen
+		if dend > end {
+			dend = end
+		}
+		if pkt[start] == 0x05 && dlen >= 4 && dstart+4 <= dend {
+			if string(pkt[dstart:dstart+4]) == fourcc {
+				return true
+			}
+		}
+		start = dend
+	}
+	return false
 }

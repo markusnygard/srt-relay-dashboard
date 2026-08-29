@@ -151,7 +151,7 @@
     </div>
     <table>
       <thead>
-        <tr><th>Health</th><th>Stream</th><th>Contact</th><th>StreamID</th><th>Sender URL</th><th>Receiver URL</th><th>Codecs</th><th>Bitrate</th><th></th></tr>
+        <tr><th>Health</th><th>Stream</th><th>Contact</th><th>StreamID</th><th>Sender URL</th><th>Receiver URL</th><th>Codecs</th><th>Format</th><th>Bitrate</th><th></th></tr>
       </thead>
       <tbody id="rows"></tbody>
     </table>
@@ -431,6 +431,13 @@ function srtUrl(port, action, streamId){
   return `srt://${HOST}:${port}?mode=caller&streamid=${action}:${streamId}`;
 }
 
+function formatLabel(st){
+  const p = st.payloadType;
+  if(p === "efp") return '<span class="badge" style="border:1px solid #06b6d455;color:#22d3ee">EFP</span>';
+  if(p === "mpegts") return '<span class="badge" style="border:1px solid #8b5cf655;color:#a78bfa">MPEG-TS</span>';
+  return "—";
+}
+
 function render(st){
   const dot = trafficLight(st);
   const codecs = (st.codecs||[]).map(c =>
@@ -450,6 +457,7 @@ function render(st){
     <td><a href="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}" onclick="return false;" title="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}">${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}</a></td>
     <td><a href="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}" onclick="return false;" title="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}">${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}</a></td>
     <td>${codecs||"—"}</td>
+    <td>${formatLabel(st)}</td>
     <td>${bitrate}</td>
     <td>${actions}</td>
   </tr>`;
@@ -457,7 +465,7 @@ function render(st){
 
 function renderAll(){
   if(VIEW_MODE) return;
-  el("rows").innerHTML = streams.length ? streams.map(render).join("") : '<tr><td colspan="9" class="empty">No streams. Add one above.</td></tr>';
+  el("rows").innerHTML = streams.length ? streams.map(render).join("") : '<tr><td colspan="10" class="empty">No streams. Add one above.</td></tr>';
 }
 
 function showDetails(id){
@@ -469,6 +477,7 @@ function showDetails(id){
     ["Contact", st.contact||"—"],
     ["StreamID", st.streamId],
     ["State", st.state],
+    ["Format", st.payloadType==="efp" ? "EFP" : (st.payloadType==="mpegts" ? "MPEG-TS" : "—")],
     ["Ingress port (sender)", st.inPort],
     ["Egress port (receiver)", st.outPort],
     ["Start", fmtDT(st.startAt)],

@@ -132,6 +132,7 @@ func (s *Stream) run(host string, latency int) {
 			s.State = StateRelaying
 			s.ConnectedAt = time.Now()
 			s.Codecs = nil
+			s.PayloadType = ""
 			s.Stats = Stats{Health: HealthGreen}
 			s.mu.Unlock()
 			s.update()
@@ -150,6 +151,7 @@ func (s *Stream) run(host string, latency int) {
 			s.mu.Lock()
 			s.State = StateWaiting
 			s.Codecs = nil
+			s.PayloadType = ""
 			s.Stats = Stats{}
 			s.IngressConnected = false
 			s.EgressConnected = false
@@ -272,8 +274,7 @@ func isTimeout(err error) bool {
 
 func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID string) {
 	buf := make([]byte, 1400)
-	parser := newTSParser()
-	codecsFound := false
+	sniffer := newPayloadSniffer()
 
 	statsTicker := time.NewTicker(1 * time.Second)
 	defer statsTicker.Stop()
@@ -331,15 +332,15 @@ func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID strin
 		}
 		s.touch()
 
-		// Sniff codecs from the first TS packets.
-		if !codecsFound {
-			parser.feed(buf[:n])
-			if parser.done() {
+		// Sniff payload type + codecs from the first messages.
+		if !sniffer.done() {
+			sniffer.feed(buf[:n])
+			if sniffer.done() {
 				s.mu.Lock()
-				s.Codecs = parser.codecs()
+				s.PayloadType = sniffer.payloadType()
+				s.Codecs = sniffer.codecs()
 				s.mu.Unlock()
 				s.update()
-				codecsFound = true
 			}
 		}
 

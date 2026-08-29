@@ -72,6 +72,7 @@ type Stream struct {
 	Contact    string     `json:"contact"`    // free-text contact person
 
 	State            StreamState `json:"state"`
+	PayloadType      string      `json:"payloadType"` // "mpegts" | "efp" | "unknown" | ""
 	Codecs           []Codec     `json:"codecs"`
 	Stats            Stats       `json:"stats"`
 	ConnectedAt      time.Time   `json:"connectedAt"`
