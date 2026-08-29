@@ -44,8 +44,9 @@ func newTSParser() *tsParser {
 }
 
 // feed processes a chunk of TS data, populating p.found when PMT is seen.
+// It keeps parsing subsequent PMTs so codecs discovered later are merged in.
 func (p *tsParser) feed(data []byte) {
-	for len(data) >= tsPacketSize && !p.done() {
+	for len(data) >= tsPacketSize {
 		if data[0] != tsSyncByte {
 			// Try to resync on the next sync byte.
 			idx := indexByte(data, tsSyncByte)

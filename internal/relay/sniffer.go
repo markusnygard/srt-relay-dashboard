@@ -69,7 +69,7 @@ type payloadSniffer struct {
 	content   map[uint8]Codec
 
 	payloadEmitted bool
-	tsEmitted      bool
+	lastCodecs     []Codec
 }
 
 func newPayloadSniffer() *payloadSniffer {
@@ -178,11 +178,13 @@ func (p *payloadSniffer) feed(data []byte) bool {
 
 	switch p.payload {
 	case PayloadMPEGTS:
-		if !p.ts.done() && data[0] == 0x47 {
+		// Keep parsing for the whole session; PMTs repeat and may later
+		// expose codecs a partial first PMT missed.
+		if data[0] == 0x47 {
 			p.ts.feed(data)
 		}
-		if p.ts.done() && !p.tsEmitted {
-			p.tsEmitted = true
+		if cs := p.ts.codecs(); len(cs) > 0 && !codecSetsEqual(cs, p.lastCodecs) {
+			p.lastCodecs = cs
 			changed = true
 		}
 	case PayloadEFP:
@@ -195,6 +197,23 @@ func (p *payloadSniffer) feed(data []byte) bool {
 	}
 
 	return changed
+}
+
+// codecSetsEqual reports whether two codec sets contain the same entries.
+func codecSetsEqual(a, b []Codec) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	inB := make(map[string]bool, len(b))
+	for _, c := range b {
+		inB[c.Type+":"+c.Name] = true
+	}
+	for _, c := range a {
+		if !inB[c.Type+":"+c.Name] {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *payloadSniffer) payloadType() string {
