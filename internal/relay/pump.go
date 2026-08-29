@@ -332,16 +332,13 @@ func (s *Stream) pump(in *srtgo.SrtSocket, readers *egressFanout, streamID strin
 		}
 		s.touch()
 
-		// Sniff payload type + codecs from the first messages.
-		if !sniffer.done() {
-			sniffer.feed(buf[:n])
-			if sniffer.done() {
-				s.mu.Lock()
-				s.PayloadType = sniffer.payloadType()
-				s.Codecs = sniffer.codecs()
-				s.mu.Unlock()
-				s.update()
-			}
+		// Sniff payload type + codecs; keeps watching for late EFP content.
+		if sniffer.feed(buf[:n]) {
+			s.mu.Lock()
+			s.PayloadType = sniffer.payloadType()
+			s.Codecs = sniffer.codecs()
+			s.mu.Unlock()
+			s.update()
 		}
 
 		written := readers.write(buf[:n])

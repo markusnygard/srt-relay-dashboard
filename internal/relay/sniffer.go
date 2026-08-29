@@ -45,21 +45,21 @@ func efpContentType(cid uint8) string {
 	}
 }
 
-// Sniffing budgets.
-const (
-	snifferMaxMsgs    = 60 // give up (and label MPEG-TS or unknown) after this many messages
-	snifferEfpMinMsgs = 10 // messages of EFP before declaring done
-)
+const snifferMaxMsgs = 80 // classify the payload as unknown after this many messages
 
-// payloadSniffer inspects the first SRT messages of a stream to classify the
-// payload as MPEG-TS or Elastic Frame Protocol (EFP) and to extract whatever
-// codec information each framing exposes.
+// payloadSniffer inspects the SRT messages of a stream to classify the payload
+// as MPEG-TS or Elastic Frame Protocol (EFP) and to extract whatever codec
+// information each framing exposes.
 //
 // MPEG-TS: each datagram usually starts with the 0x47 sync byte and the TS
 // PAT/PMT reveal the elementary streams (H.264/HEVC/AV1 + audio).
 //
-// EFP: the first byte holds the frame type in the low nibble (0..4) with flags
-// in the high nibble; type-2 fragments carry the content type at byte 2.
+// EFP: fragments are validated structurally (frame type in the low nibble of
+// the type byte, header sizes and length prefix checked) so random payload
+// bytes cannot be mistaken for EFP. EFP is typically sent as one fragment per
+// SRT message; some senders prepend a 4-byte big-endian length. The content
+// type only appears in type-2 fragments, so the sniffer keeps watching for the
+// whole relaying session.
 type payloadSniffer struct {
 	ts        *tsParser
 	tsSyncs   int
@@ -67,6 +67,9 @@ type payloadSniffer struct {
 	msgs      int
 	payload   string
 	content   map[uint8]Codec
+
+	payloadEmitted bool
+	tsEmitted      bool
 }
 
 func newPayloadSniffer() *payloadSniffer {
@@ -76,34 +79,83 @@ func newPayloadSniffer() *payloadSniffer {
 	}
 }
 
-func (p *payloadSniffer) feed(data []byte) {
-	if len(data) == 0 || p.done() {
-		return
+// tryEFP reports whether data looks like a valid EFP fragment. The EFP header
+// may start at offset 0 (reference implementation) or at offset 4 (senders that
+// prepend a 4-byte big-endian length, whose high bytes are zero for the small
+// message sizes used here). For type-2 fragments it also returns the content
+// type byte.
+//
+// To avoid false positives from random payload bytes (e.g. EFP continuation
+// fragments), type-1/3/4 fragments are only accepted when the length prefix is
+// present, and type-2 fragments must satisfy the header size fields.
+func tryEFP(data []byte) (ft int, content uint8, ok bool) {
+	for _, off := range []int{0, 4} {
+		if off >= len(data) {
+			continue
+		}
+		if off == 4 && (data[0] != 0 || data[1] != 0) {
+			continue
+		}
+		ft := int(data[off] & 0x0F)
+		if ft < 1 || ft > 4 {
+			continue
+		}
+		switch ft {
+		case 1, 3, 4:
+			// Only accept when prefixed (the reference header-less EFP is
+			// still classified via its type-2 tail fragments).
+			if off != 4 {
+				continue
+			}
+			if ft != 4 {
+				if off+10 > len(data) {
+					continue
+				}
+				// hOfFragmentNo must describe a multi-fragment frame.
+				if of := int(data[off+6]) | int(data[off+7])<<8; of < 1 {
+					continue
+				}
+			}
+			return ft, 0, true
+		case 2:
+			if off+27 > len(data) {
+				continue
+			}
+			c := data[off+2]
+			if _, known := efpContentNames[c]; !known {
+				continue
+			}
+			// Some senders use the aligned (32-byte) header; others the
+			// packed (27-byte) one. Verify hSizeOfData matches.
+			if off+32 <= len(data) {
+				if sz := int(data[off+4]) | int(data[off+5])<<8; sz == len(data)-off-32 {
+					return ft, c, true
+				}
+			}
+			if sz := int(data[off+3]) | int(data[off+4])<<8; sz == len(data)-off-27 {
+				return ft, c, true
+			}
+			continue
+		}
+	}
+	return 0, 0, false
+}
+
+// feed inspects one SRT message and reports whether the payload type or the
+// detected codecs changed since the last call.
+func (p *payloadSniffer) feed(data []byte) bool {
+	if len(data) == 0 {
+		return false
 	}
 	p.msgs++
 
-	if data[0] == 0x47 {
-		p.tsSyncs++
-		p.ts.feed(data)
-		if p.ts.done() {
-			p.payload = PayloadMPEGTS
-		}
-	} else {
-		ft := int(data[0] & 0x0F)
-		if ft >= 1 && ft <= 4 {
-			p.efpFrames++
-			if ft == 2 && len(data) >= 3 {
-				cid := data[2]
-				if name, ok := efpContentNames[cid]; ok {
-					if _, exists := p.content[cid]; !exists {
-						p.content[cid] = Codec{Type: efpContentType(cid), Name: name, PID: 0}
-					}
-				}
-			}
-		}
-	}
-
+	// Classify the payload type once, from the earliest messages.
 	if p.payload == "" {
+		if data[0] == 0x47 {
+			p.tsSyncs++
+		} else if ft, _, ok := tryEFP(data); ok && ft != 0 {
+			p.efpFrames++
+		}
 		switch {
 		case p.tsSyncs >= 2 && p.tsSyncs > p.efpFrames:
 			p.payload = PayloadMPEGTS
@@ -117,19 +169,32 @@ func (p *payloadSniffer) feed(data []byte) {
 			}
 		}
 	}
-}
 
-// done reports when classification (and codec sniffing) can stop.
-func (p *payloadSniffer) done() bool {
+	changed := false
+	if p.payload != "" && !p.payloadEmitted {
+		p.payloadEmitted = true
+		changed = true
+	}
+
 	switch p.payload {
 	case PayloadMPEGTS:
-		// keep parsing TS until the PMT (codecs) is found or the budget ends
-		return p.ts.done() || p.msgs >= snifferMaxMsgs
+		if !p.ts.done() && data[0] == 0x47 {
+			p.ts.feed(data)
+		}
+		if p.ts.done() && !p.tsEmitted {
+			p.tsEmitted = true
+			changed = true
+		}
 	case PayloadEFP:
-		return p.msgs >= snifferEfpMinMsgs
-	default:
-		return p.msgs >= snifferMaxMsgs
+		if ft, c, ok := tryEFP(data); ok && ft == 2 {
+			if _, exists := p.content[c]; !exists {
+				p.content[c] = Codec{Type: efpContentType(c), Name: efpContentNames[c], PID: 0}
+				changed = true
+			}
+		}
 	}
+
+	return changed
 }
 
 func (p *payloadSniffer) payloadType() string {
