@@ -207,6 +207,19 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="durationModal">
+  <div class="modal" style="width:min(420px,94vw)">
+    <button class="close ghost" onclick="closeDuration()">✕</button>
+    <h2 id="durationTitle">Add stream — for how long?</h2>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+      <button onclick="chooseDuration(1)">1 hour</button>
+      <button onclick="chooseDuration(2)">2 hours</button>
+      <button onclick="chooseDuration(5)">5 hours</button>
+      <button class="ghost" onclick="chooseManual()">Manual</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="scheduleModal">
   <div class="modal">
     <button class="close ghost" onclick="closeSchedule()">✕</button>
@@ -360,22 +373,50 @@ async function loadPorts(){
   } catch(e){}
 }
 
-async function addStream(){
+let pendingStream = null;
+
+function addStream(){
   const name = el("nameInput").value.trim();
   const contact = el("contactInput").value.trim();
   const inPort = parseInt(el("portSelect").value,10);
   if(!name){ alert("Enter a stream name"); return; }
   if(!inPort){ alert("Select an ingress port"); return; }
+  pendingStream = {name, contact, inPort};
+  el("durationModal").classList.add("open");
+}
+
+function closeDuration(){ el("durationModal").classList.remove("open"); }
+
+async function chooseDuration(hours){
+  closeDuration();
+  const p = pendingStream;
+  pendingStream = null;
+  if(!p) return;
+  const now = new Date();
+  const stop = new Date(now.getTime() + hours*3600000);
   try {
     await api("/api/streams/add", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({name, inPort, contact, autoRemove: true})
+      body: JSON.stringify({name:p.name, inPort:p.inPort, contact:p.contact, autoRemove:true,
+        startAt: now.toISOString(), stopAt: stop.toISOString()})
     });
   } catch(e){ alert(e.message); return; }
   el("nameInput").value=""; el("contactInput").value="";
   await loadPorts();
   renderAll();
+}
+
+function chooseManual(){
+  closeDuration();
+  const p = pendingStream;
+  pendingStream = null;
+  if(!p) return;
+  openSchedule("");
+  el("schName").value = p.name;
+  el("schContact").value = p.contact || "";
+  el("schPort").value = String(p.inPort);
+  el("scheduleModal").dataset.editId = "";
 }
 
 async function removeStream(id){
@@ -773,17 +814,22 @@ function openSchedule(idOrName, cellMs, hourStart){
   el("schContact").value = st ? (st.contact||"") : "";
   el("schRecur").value = st ? (st.recurrence||"") : "";
   el("schAuto").checked = st ? !!st.autoRemove : true;
-  if(st && st.startAt) { el("schStartDate").value = toDatePart(st.startAt); el("schStartHour").value = toHours(st.startAt); el("schStartMin").value = toMins(st.startAt); }
-  else { el("schStartDate").value = ""; el("schStartHour").value = ""; el("schStartMin").value = ""; }
-  if(st && st.stopAt) { el("schStopDate").value = toDatePart(st.stopAt); el("schStopHour").value = toHours(st.stopAt); el("schStopMin").value = toMins(st.stopAt); }
-  else { el("schStopDate").value = ""; el("schStopHour").value = ""; el("schStopMin").value = ""; }
-  // prefill time from a clicked cell (day start + hour)
-  if(!st && hourStart){
-    const d = new Date(parseInt(hourStart));
-    el("schStartDate").value = toDatePart(d.toISOString());
-    el("schStartHour").value = toHours(d.toISOString());
-    el("schStartMin").value = toMins(d.toISOString());
-  }
+
+  // Start: existing time, else clicked cell, else now.
+  // Stop: existing time, else start + 1h.
+  const now = new Date();
+  const startVal = (st && st.startAt) ? new Date(st.startAt)
+                 : ((!st && hourStart) ? new Date(parseInt(hourStart)) : now);
+  const stopVal = (st && st.stopAt) ? new Date(st.stopAt)
+                : new Date(startVal.getTime() + 3600000);
+
+  el("schStartDate").value = toDatePart(startVal.toISOString());
+  el("schStartHour").value = toHours(startVal.toISOString());
+  el("schStartMin").value = toMins(startVal.toISOString());
+  el("schStopDate").value = toDatePart(stopVal.toISOString());
+  el("schStopHour").value = toHours(stopVal.toISOString());
+  el("schStopMin").value = toMins(stopVal.toISOString());
+
   el("schPort").value = st ? String(st.inPort) : "";
   // store editing id
   el("scheduleModal").dataset.editId = st ? st.streamId : "";
