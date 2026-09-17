@@ -38,6 +38,8 @@
   .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:12px; margin-right:4px; background:#1d2430; color:var(--text); }
   .codec-v { border:1px solid #2563eb55; color:#93c5fd; }
   .codec-a { border:1px solid #a855f755; color:#d8b4fe; }
+  .multiday-time { color:#c4b5fd; }
+  .badge.multiday { border:1px solid #6d28d955; color:#c4b5fd; }
   .state { font-size:12px; color:var(--muted); }
   a { color:var(--accent); text-decoration:none; font-family:ui-monospace,Menlo,monospace; font-size:12px; word-break:break-all; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:50; }
@@ -445,6 +447,14 @@ function schedTime(st){
   return `${t(st.startAt)} – ${t(st.stopAt)}`;
 }
 
+// True when the stream ends on a different calendar day than it starts (i.e.
+// it spans past its start day). Nil start/stop never counts.
+function isMultiday(st){
+  if(!st.startAt || !st.stopAt) return false;
+  const s = new Date(st.startAt), e = new Date(st.stopAt);
+  return s.getFullYear()!==e.getFullYear() || s.getMonth()!==e.getMonth() || s.getDate()!==e.getDate();
+}
+
 // Streams sorted by full start time (date included); unscheduled last.
 function sortedStreams(){
   return [...streams].sort((a,b) => {
@@ -460,6 +470,8 @@ function render(st){
     `<span class="badge ${c.type==="video"?"codec-v":"codec-a"}">${c.name}</span>`).join("");
   const bitrate = st.stats && st.stats.bitrateKbps>0 ? (st.stats.bitrateKbps/1000).toFixed(2)+" Mbps" : "—";
   const sid = escapeHtml(st.streamId);
+  const md = isMultiday(st);
+  const timeCell = `<span class="state${md?" multiday-time":""}">${schedTime(st)}</span>${md?' <span class="badge multiday">multiday</span>':''}`;
   const hasIngress = !!st.ingressConnected;
   // Only show Details when there is an ingress; no ingress = no details.
   const actions = VIEW_MODE ? "" : (hasIngress
@@ -467,7 +479,7 @@ function render(st){
     : `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`);
   return `<tr>
     <td>${dot}</td>
-    <td><span class="state">${schedTime(st)}</span></td>
+    <td>${timeCell}</td>
     <td><b>${escapeHtml(st.name)}</b><br><span class="state">${st.state}</span></td>
     <td>${escapeHtml(st.contact||"")}</td>
     <td><code>${sid}</code></td>
