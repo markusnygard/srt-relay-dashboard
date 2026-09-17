@@ -77,6 +77,7 @@
   .cal-event.waiting { background:#1e3a5f; }
   .cal-event.scheduled { background:#2d3038; }
   .cal-event.relaying { background:#14532d; }
+  .cal-event.multiday { background:#6d28d9; }
   .cal-nowline { position:absolute; left:0; right:0; height:2px; background:var(--red); z-index:4; pointer-events:none; }
   .cal-nowline::before { content:''; position:absolute; left:-5px; top:-4px; width:10px; height:10px; border-radius:50%; background:var(--red); }
   @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.3;} }
@@ -761,7 +762,10 @@ function renderCalendar(){
       const heightPx = endPx - topPx;
 
       const liveNow = isNowWithin(st, blk) && st.state === "relaying";
-      const cls2 = liveNow ? "relaying" : (st.state==="scheduled"?"scheduled":"waiting");
+      let cls2 = liveNow ? "relaying" : (st.state==="scheduled"?"scheduled":"waiting");
+      // A stream that runs past its own start day is drawn only on that day, so
+      // give it a distinct color to signal it continues beyond the day.
+      if(ev.stopMs > dayEndMs || ev.startMs < dayMs) cls2 += " multiday";
       const tl = trafficLight(st);
       const clickAttr = VIEW_MODE ? "" : `onclick="event.stopPropagation(); showDetails('${escapeHtml(st.streamId)}')"`;
       const startLabel = fmtTimeOnly(ev.startMs);
