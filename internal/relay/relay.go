@@ -92,6 +92,10 @@ type Stream struct {
 	egressDone     chan struct{}
 	egressOpen     bool
 
+	// current ingress (publisher) session, if any
+	ingressSession *srtgo.SrtSocket
+	sessionSeq     uint64
+
 	stopCh   chan struct{}
 	stopped  chan struct{}
 	onChange func(*Stream)

@@ -141,13 +141,22 @@ func (s *Stream) handleIngress(inSock *srtgo.SrtSocket, streamID string) {
 		inSock.Close()
 		return
 	}
-	target.startRelay(inSock, fanout)
+	// Run the pump off the accept loop so a reconnecting sender can take over
+	// immediately instead of waiting for the old (dead) session to time out.
+	go target.startRelay(inSock, fanout)
 }
 
 // startRelay marks the target stream relaying and pumps the ingress socket to
-// its egress fanout until the sender disconnects.
+// its egress fanout until the sender disconnects. A new session supersedes any
+// previous one: the old ingress socket is closed so its pump exits right away.
 func (t *Stream) startRelay(inSock *srtgo.SrtSocket, fanout *egressFanout) {
+	t.touch()
+
 	t.mu.Lock()
+	t.sessionSeq++
+	seq := t.sessionSeq
+	old := t.ingressSession
+	t.ingressSession = inSock
 	t.State = StateRelaying
 	t.ConnectedAt = time.Now()
 	t.IngressConnected = true
@@ -156,20 +165,28 @@ func (t *Stream) startRelay(inSock *srtgo.SrtSocket, fanout *egressFanout) {
 	t.PayloadType = ""
 	t.Stats = Stats{Health: HealthGreen}
 	t.mu.Unlock()
+
+	if old != nil {
+		// Force the previous sender's pump to stop.
+		old.Close()
+	}
 	t.update()
 
 	t.pump(inSock, fanout)
 	inSock.Close()
 
-	// Reset so the dashboard no longer shows relaying after the publisher
-	// disconnects.
+	// Reset only if this is still the current session; a newer sender may have
+	// taken over while this one was winding down.
 	t.mu.Lock()
-	t.State = StateWaiting
-	t.Codecs = nil
-	t.PayloadType = ""
-	t.Stats = Stats{}
-	t.IngressConnected = false
-	t.EgressConnected = fanout.count() > 0
+	if t.sessionSeq == seq {
+		t.ingressSession = nil
+		t.State = StateWaiting
+		t.Codecs = nil
+		t.PayloadType = ""
+		t.Stats = Stats{}
+		t.IngressConnected = false
+		t.EgressConnected = fanout.count() > 0
+	}
 	t.mu.Unlock()
 	t.update()
 }
