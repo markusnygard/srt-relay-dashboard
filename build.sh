@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build srt-relay-dashboard for Linux or macOS.
 #
-# Requires: Go, a C compiler, and libsrt 1.5.6+ (headers + lib).
+# Requires: Go, a C compiler, and libsrt 1.5.7+ (headers + lib).
 #
 # Linux (Debian/Ubuntu):
 #   sudo apt install -y cmake build-essential pkg-config libssl-dev libzstd-dev

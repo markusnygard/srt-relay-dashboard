@@ -1,7 +1,7 @@
 # Building
 
 The relay links against the native SRT library (`libsrt`), so it must be built
-in a Linux environment with SRT 1.5.6+ installed. The easiest way is the
+in a Linux environment with SRT 1.5.7+ installed. The easiest way is the
 included Dockerfile, which compiles libsrt from source and produces a binary
 plus the shared library you copy to the target server.
 
@@ -22,7 +22,7 @@ docker build -t srt-relay-dashboard .
 docker create --name relay-extract srt-relay-dashboard
 
 docker cp relay-extract:/srt-relay-app ./
-docker cp relay-extract:/usr/local/lib/libsrt.so.1.5.6 ./
+docker cp relay-extract:/usr/local/lib/libsrt.so.1.5.7 ./
 
 docker rm relay-extract
 ```
@@ -30,7 +30,7 @@ docker rm relay-extract
 You now have:
 
 - `srt-relay-app` — the Go relay + web dashboard binary
-- `libsrt.so.1.5.6` — the SRT shared library it needs at runtime
+- `libsrt.so.1.5.7` — the SRT shared library it needs at runtime
 
 ## Deploy on the server
 
@@ -50,8 +50,8 @@ ldd ./srt-relay-app
 ```bash
 sudo apt install -y cmake build-essential pkg-config libssl-dev libzstd-dev
 
-# build libsrt 1.5.6 from source
-git clone --depth 1 --branch v1.5.6 https://github.com/Haivision/srt.git
+# build libsrt 1.5.7 from source
+git clone --depth 1 --branch v1.5.7 https://github.com/Haivision/srt.git
 cd srt && mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_APPS=OFF -DENABLE_SHARED=ON -DENABLE_STATIC=OFF ..
 make -j$(nproc) && sudo make install

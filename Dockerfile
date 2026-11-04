@@ -5,9 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake build-essential pkg-config git libssl-dev libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Build libsrt from source (srtgo requires >= 1.4.2; 1.5.6 recommended for security).
+# Build libsrt from source (srtgo requires >= 1.4.2; 1.5.7+ required: fixes CVE-2026-55868/55869).
 WORKDIR /srt
-RUN git clone --depth 1 --branch v1.5.6 https://github.com/Haivision/srt.git . \
+RUN git clone --depth 1 --branch v1.5.7 https://github.com/Haivision/srt.git . \
     && mkdir -p build && cd build \
     && cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_APPS=OFF -DENABLE_SHARED=ON -DENABLE_STATIC=OFF .. \
     && make -j$(nproc) && make install \

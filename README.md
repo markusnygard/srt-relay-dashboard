@@ -178,6 +178,11 @@ By default the egress port = ingress port + 100 (`--egress-offset`):
 
 ### Easiest: download a release binary (Linux)
 
+> **Security:** release v0.1.0 bundles `libsrt` 1.5.6, which only partly fixes
+> CVE-2026-55868 (encryption downgrade) and CVE-2026-55869 (KMREQ heap
+> overflow). Until a release with libsrt **1.5.7+** is published, build from
+> source with the Dockerfile (see [BUILD.md](BUILD.md)) instead.
+
 1. Grab the latest Linux binary + `libsrt.so.1.5.6` from the
    [Releases](https://github.com/markusnygard/srt-relay-dashboard/releases) page.
 2. Put both in the same folder on the server and run:
@@ -219,7 +224,7 @@ docker run --rm -d \
 ### Option B: Standalone binary (recommended for the relay server)
 
 1. Build the static binary (see [BUILD.md](BUILD.md)).
-2. Copy `srt-relay-app` and `libsrt.so.1.5.6` to the server.
+2. Copy `srt-relay-app` and `libsrt.so.1.5.7` to the server.
 3. Run:
 
 ```bash
