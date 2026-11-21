@@ -199,17 +199,18 @@ func (p *payloadSniffer) feed(data []byte) bool {
 	return changed
 }
 
-// codecSetsEqual reports whether two codec sets contain the same entries.
+// codecSetsEqual reports whether two track lists contain the same entries
+// (type, name, PID and language).
 func codecSetsEqual(a, b []Codec) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	inB := make(map[string]bool, len(b))
+	inB := make(map[Codec]bool, len(b))
 	for _, c := range b {
-		inB[c.Type+":"+c.Name] = true
+		inB[c] = true
 	}
 	for _, c := range a {
-		if !inB[c.Type+":"+c.Name] {
+		if !inB[c] {
 			return false
 		}
 	}

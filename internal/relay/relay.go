@@ -20,11 +20,14 @@ const (
 	StateError     StreamState = "error"
 )
 
-// Codec describes a detected elementary stream from MPEG-TS.
+// Codec describes one detected track (elementary stream) of the payload.
+// For MPEG-TS there is one entry per elementary PID, so a stream with three
+// audio tracks reports three audio entries.
 type Codec struct {
-	Type string `json:"type"` // "video" | "audio"
-	Name string `json:"name"` // e.g. "H.264", "AAC"
-	PID  int    `json:"pid"`
+	Type string `json:"type"`           // "video" | "audio" | "subtitle" | "data" | "other"
+	Name string `json:"name"`           // e.g. "H.264", "AAC (ADTS)", "DVB subtitles", "SCTE-35"
+	PID  int    `json:"pid"`            // elementary PID (0 for EFP)
+	Lang string `json:"lang,omitempty"` // ISO 639 language code from the PMT, e.g. "fin"
 }
 
 // Stats is a snapshot of SRT health metrics for one stream.
