@@ -245,6 +245,15 @@
       <div class="field"><label>Contact</label><input id="schContact" type="text"></div>
       <div class="field"><label>Ingress port</label><select id="schPort"></select></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:200px"><label>Sender passphrase (SRT encryption)</label>
+          <div style="display:flex;gap:4px"><input id="schInPass" type="text" autocomplete="off" spellcheck="false" placeholder="none" style="flex:1"><button type="button" class="ghost" title="Generate" onclick="genPassphrase('schInPass')">🎲</button></div>
+        </div>
+        <div class="field" style="flex:1;min-width:200px"><label>Receiver passphrase (SRT encryption)</label>
+          <div style="display:flex;gap:4px"><input id="schOutPass" type="text" autocomplete="off" spellcheck="false" placeholder="none" style="flex:1"><button type="button" class="ghost" title="Generate" onclick="genPassphrase('schOutPass')">🎲</button></div>
+        </div>
+      </div>
+      <div class="hint">Optional, 10–79 characters. The sender (or receiver) must enter the same passphrase in its SRT settings; empty = no encryption. Changing a passphrase disconnects the current sender and receivers so they reconnect with the new one.</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
         <div class="field" style="flex:1"><label>Start (leave empty = now)</label>
           <div style="display:flex;gap:4px;align-items:center"><input id="schStartDate" type="date" style="flex:1"><select id="schStartHour" class="time-sel"></select><span>:</span><select id="schStartMin" class="time-sel"></select></div>
         </div>
@@ -505,8 +514,8 @@ function render(st){
     <td><b>${escapeHtml(st.name)}</b><br><span class="state">${st.state}</span></td>
     <td>${escapeHtml(st.contact||"")}</td>
     <td><code>${sid}</code></td>
-    <td><a href="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}" onclick="return false;" title="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}">${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}</a></td>
-    <td><a href="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}" onclick="return false;" title="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}">${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}</a></td>
+    <td>${st.inProtected?'<span title="Sender passphrase required">🔒</span> ':''}<a href="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}" onclick="return false;" title="${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}">${escapeHtml(srtUrl(st.inPort,'publish',st.streamId))}</a></td>
+    <td>${st.outProtected?'<span title="Receiver passphrase required">🔒</span> ':''}<a href="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}" onclick="return false;" title="${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}">${escapeHtml(srtUrl(st.outPort,'read',st.streamId))}</a></td>
     <td>${codecs||"—"}</td>
     <td>${formatLabel(st)}</td>
     <td>${bitrate}</td>
@@ -572,7 +581,9 @@ function showDetails(id){
     ["Stop", fmtDT(st.stopAt)],
     ["Recurrence", st.recurrence||"none"],
     ["Sender OBS server", srtUrl(st.inPort,"publish",st.streamId)],
+    ["Sender passphrase", st.inProtected ? (canEdit() ? "…" : "set (hidden)") : "none", "detInPass"],
     ["Receiver OBS input", srtUrl(st.outPort,"read",st.streamId)],
+    ["Receiver passphrase", st.outProtected ? (canEdit() ? "…" : "set (hidden)") : "none", "detOutPass"],
     ...trackRows(st.codecs),
     ["Bitrate", s.bitrateKbps>0 ? (s.bitrateKbps/1000).toFixed(2)+" Mbps" : "—"],
     ["Resent packets", s.retransmitted ?? "—"],
@@ -581,9 +592,17 @@ function showDetails(id){
     ["RTT", s.rttMs ? s.rttMs.toFixed(1)+" ms" : "—"],
   ];
   el("modalTitle").textContent = "Stream: "+st.name;
-  el("modalBody").innerHTML = rows.map(r=>`<div class="row"><span>${r[0]}</span><span>${escapeHtml(String(r[1]))}</span></div>`).join("");
+  el("modalBody").innerHTML = rows.map(r=>`<div class="row"><span>${r[0]}</span><span${r[2]?` id="${r[2]}"`:""}>${escapeHtml(String(r[1]))}</span></div>`).join("");
   el("detailsModal").classList.add("open");
   el("detailsModal").dataset.editId = st.streamId;
+  // Operators/admins see the passphrases (needed to configure encoders).
+  if(canEdit() && (st.inProtected || st.outProtected)){
+    loadSecrets(st.streamId).then(sec => {
+      if(el("detailsModal").dataset.editId !== st.streamId) return;
+      if(st.inProtected && el("detInPass")) el("detInPass").textContent = sec.inPassphrase || "none";
+      if(st.outProtected && el("detOutPass")) el("detOutPass").textContent = sec.outPassphrase || "none";
+    }).catch(()=>{});
+  }
 }
 function editFromDetails(){
   const id = el("detailsModal").dataset.editId;
@@ -932,8 +951,39 @@ function openSchedule(idOrName, cellMs, hourStart){
   el("schPort").value = st ? String(st.inPort) : "";
   // store editing id
   el("scheduleModal").dataset.editId = st ? st.streamId : "";
+  // Passphrases: empty for a new stream; loaded from the server when editing.
+  // Until they are loaded the fields are disabled and not sent on save.
+  el("schInPass").value = ""; el("schOutPass").value = "";
+  setPassFieldsLoaded(!st);
+  if(st){
+    loadSecrets(st.streamId).then(sec => {
+      if(el("scheduleModal").dataset.editId !== st.streamId) return;
+      el("schInPass").value = sec.inPassphrase || "";
+      el("schOutPass").value = sec.outPassphrase || "";
+      setPassFieldsLoaded(true);
+    }).catch(()=>{});
+  }
   renderScheduleHint();
   el("scheduleModal").classList.add("open");
+}
+
+// --- SRT passphrases ---
+function setPassFieldsLoaded(ok){
+  el("scheduleModal").dataset.passLoaded = ok ? "1" : "";
+  for(const id of ["schInPass","schOutPass"]) el(id).disabled = !ok;
+}
+function loadSecrets(id){
+  return api("/api/streams/"+encodeURIComponent(id)+"/secrets");
+}
+function genPassphrase(fieldId){
+  // 20 characters without look-alikes, easy to type into an encoder.
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const buf = new Uint32Array(20);
+  crypto.getRandomValues(buf);
+  el(fieldId).value = Array.from(buf, n => chars[n % chars.length]).join("");
+}
+function passphraseError(p){
+  return p && (p.length < 10 || p.length > 79) ? "Passphrase must be 10–79 characters" : "";
 }
 
 function toDatePart(iso){
@@ -988,6 +1038,13 @@ async function saveSchedule(){
     startAt: (startDate && startHour !== "" && startMin !== "") ? new Date(startDate + "T" + startHour + ":" + startMin).toISOString() : null,
     stopAt: (stopDate && stopHour !== "" && stopMin !== "") ? new Date(stopDate + "T" + stopHour + ":" + stopMin).toISOString() : null,
   };
+  // Only send passphrases once they are known (so a failed load can't wipe them).
+  if(el("scheduleModal").dataset.passLoaded){
+    body.inPassphrase = el("schInPass").value.trim();
+    body.outPassphrase = el("schOutPass").value.trim();
+    const err = passphraseError(body.inPassphrase) || passphraseError(body.outPassphrase);
+    if(err){ alert(err); return; }
+  }
   try {
     if(editId){
       await api("/api/streams/"+encodeURIComponent(editId), {method:"PATCH", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});

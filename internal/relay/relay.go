@@ -74,6 +74,11 @@ type Stream struct {
 	AutoRemove bool       `json:"autoRemove"` // remove after stopAt (one-off)
 	Contact    string     `json:"contact"`    // free-text contact person
 
+	// SRT encryption. Only the flags are public; the passphrases themselves
+	// are read via Passphrases() by users allowed to manage streams.
+	InProtected  bool `json:"inProtected"`  // sender must use the ingress passphrase
+	OutProtected bool `json:"outProtected"` // readers must use the egress passphrase
+
 	State            StreamState `json:"state"`
 	PayloadType      string      `json:"payloadType"` // "mpegts" | "efp" | "unknown" | ""
 	Codecs           []Codec     `json:"codecs"`
@@ -87,6 +92,10 @@ type Stream struct {
 	active       bool
 	lastActivity time.Time
 	latency      int
+
+	inPassphrase     string // ingress (sender) SRT passphrase, "" = none
+	outPassphrase    string // egress (reader) SRT passphrase, "" = none
+	restartListeners bool   // set when passphrases change
 
 	// persistent egress (readers) side, open while the stream is active
 	egressListener *srtgo.SrtSocket
@@ -176,7 +185,9 @@ func (r *Relay) IdleRemoveMin() int {
 }
 
 // AddStream registers a new relay stream and starts its run loop.
-func (r *Relay) AddStream(name, streamID string, inPort, outPort int, startAt, stopAt *time.Time, recurrence string, autoRemove bool, contact string) *Stream {
+// inPass / outPass are the SRT passphrases for the sender and reader sides
+// ("" = unencrypted); callers validate them with ValidatePassphrase.
+func (r *Relay) AddStream(name, streamID string, inPort, outPort int, startAt, stopAt *time.Time, recurrence string, autoRemove bool, contact, inPass, outPass string) *Stream {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -201,6 +212,7 @@ func (r *Relay) AddStream(name, streamID string, inPort, outPort int, startAt, s
 		onChange:   r.onChange,
 		r:          r,
 	}
+	s.setPassphrasesLocked(inPass, outPass) // before run: never listen unprotected
 	s.active = s.isActiveNowLocked()
 	r.streams[id] = s
 	go s.run(r.host, r.latency)

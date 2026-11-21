@@ -46,9 +46,14 @@ func (s *Stream) run(host string, latency int) {
 
 		s.setState(StateWaiting)
 
+		// Listeners are built with the current passphrases; a later change
+		// sets restartListeners and we come back here to rebuild them.
+		s.takeRestart()
+		inPass, outPass := s.Passphrases()
+
 		// Create one persistent ingress listener that stays bound so SRT
 		// handshakes are always received (no 2s gaps between attempts).
-		inListener, err := s.newListener(host, s.InPort, options)
+		inListener, err := s.newListener(host, s.InPort, listenerOptions(options, inPass))
 		if err != nil {
 			s.logf("ingress listen error on %d: %v", s.InPort, err)
 			select {
@@ -61,7 +66,7 @@ func (s *Stream) run(host string, latency int) {
 
 		// Persistent egress listener: readers may connect at any time while
 		// the stream is active, independent of any single sender session.
-		if !s.openEgress(host, options) {
+		if !s.openEgress(host, listenerOptions(options, outPass)) {
 			inListener.Close()
 			select {
 			case <-s.stopCh:
@@ -85,6 +90,12 @@ func (s *Stream) run(host string, latency int) {
 			active = s.active
 			s.mu.Unlock()
 			if !active {
+				inListener.Close()
+				s.closeEgress()
+				break
+			}
+			if s.takeRestart() {
+				// Passphrases changed: rebuild both listeners.
 				inListener.Close()
 				s.closeEgress()
 				break
@@ -114,7 +125,7 @@ func (s *Stream) run(host string, latency int) {
 			// Route by the sender's streamid to the matching stream, or
 			// reject the sender if no stream matches.
 			streamID, _ := inSock.GetSockOptString(srtgo.SRTO_STREAMID)
-			s.handleIngress(inSock, streamID)
+			s.handleIngress(inSock, streamID, inPass)
 		}
 	}
 }
@@ -123,17 +134,24 @@ func (s *Stream) run(host string, latency int) {
 // streamId/name matches the sender's streamid, relaying to that stream's
 // egress port regardless of which ingress port the sender connected to.
 // Senders whose streamid matches no stream are rejected. A missing streamid
-// falls back to the port-owning stream.
-func (s *Stream) handleIngress(inSock *srtgo.SrtSocket, streamID string) {
+// falls back to the port-owning stream. listenerPass is the passphrase the
+// ingress listener enforced; a passphrase-protected stream can't be reached
+// through another stream's port without having proven its own passphrase.
+func (s *Stream) handleIngress(inSock *srtgo.SrtSocket, streamID, listenerPass string) {
 	name := cleanStreamID(streamID)
 	target := s
 	if name != "" {
 		target = s.r.findByStreamID(name)
 		if target == nil {
-			s.logf("rejecting ingress: streamid %q matches no stream", streamID)
+			s.logf("rejecting ingress: streamid %q matches no stream", name)
 			inSock.Close()
 			return
 		}
+	}
+	if target != s && !target.acceptsRoutedSender(listenerPass) {
+		s.logf("rejecting ingress for %q via port %d: stream requires its own passphrase", name, s.InPort)
+		inSock.Close()
+		return
 	}
 	fanout, ok := target.egress()
 	if !ok {

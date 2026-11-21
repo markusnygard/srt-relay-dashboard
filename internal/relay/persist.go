@@ -17,6 +17,9 @@ type persistStream struct {
 	Recurrence string     `json:"recurrence"`
 	AutoRemove bool       `json:"autoRemove"`
 	Contact    string     `json:"contact"`
+	// SRT passphrases (streams.json is written with mode 0600).
+	InPassphrase  string `json:"inPassphrase,omitempty"`
+	OutPassphrase string `json:"outPassphrase,omitempty"`
 }
 
 func (r *Relay) persist() {
@@ -32,16 +35,19 @@ func (r *Relay) persistLocked() {
 	}
 	out := make([]persistStream, 0, len(r.streams))
 	for _, s := range r.streams {
+		inPass, outPass := s.Passphrases()
 		out = append(out, persistStream{
-			Name:       s.Name,
-			StreamID:   s.StreamID,
-			InPort:     s.InPort,
-			OutPort:    s.OutPort,
-			StartAt:    s.StartAt,
-			StopAt:     s.StopAt,
-			Recurrence: s.Recurrence,
-			AutoRemove: s.AutoRemove,
-			Contact:    s.Contact,
+			Name:          s.Name,
+			StreamID:      s.StreamID,
+			InPort:        s.InPort,
+			OutPort:       s.OutPort,
+			StartAt:       s.StartAt,
+			StopAt:        s.StopAt,
+			Recurrence:    s.Recurrence,
+			AutoRemove:    s.AutoRemove,
+			Contact:       s.Contact,
+			InPassphrase:  inPass,
+			OutPassphrase: outPass,
 		})
 	}
 	data, err := json.MarshalIndent(out, "", "  ")
@@ -72,7 +78,7 @@ func (r *Relay) LoadStreams() error {
 		return err
 	}
 	for _, p := range ps {
-		r.AddStream(p.Name, p.StreamID, p.InPort, p.OutPort, p.StartAt, p.StopAt, p.Recurrence, p.AutoRemove, p.Contact)
+		r.AddStream(p.Name, p.StreamID, p.InPort, p.OutPort, p.StartAt, p.StopAt, p.Recurrence, p.AutoRemove, p.Contact, p.InPassphrase, p.OutPassphrase)
 	}
 	return nil
 }

@@ -149,6 +149,29 @@ type addStreamRequest struct {
 	Recurrence string     `json:"recurrence"`
 	AutoRemove bool       `json:"autoRemove"`
 	Contact    string     `json:"contact"`
+	// SRT passphrases: omitted/null = unchanged (edit) or none (add),
+	// "" = remove, otherwise 10-79 characters.
+	InPassphrase  *string `json:"inPassphrase"`
+	OutPassphrase *string `json:"outPassphrase"`
+}
+
+// validatePassphrases checks the optional passphrases in an add/edit request.
+func (req *addStreamRequest) validatePassphrases() error {
+	for _, p := range []*string{req.InPassphrase, req.OutPassphrase} {
+		if p != nil {
+			if err := relay.ValidatePassphrase(*p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +188,10 @@ func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
+	if err := req.validatePassphrases(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	outPort, ok := s.egressFor(req.InPort)
 	if !ok {
 		http.Error(w, "ingress port not in the configured port list", http.StatusBadRequest)
@@ -177,7 +204,8 @@ func (s *server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 
 	streamID := generateStreamID(req.Name)
 	st := s.relay.AddStream(req.Name, streamID, req.InPort, outPort,
-		req.StartAt, req.StopAt, req.Recurrence, req.AutoRemove, req.Contact)
+		req.StartAt, req.StopAt, req.Recurrence, req.AutoRemove, req.Contact,
+		deref(req.InPassphrase), deref(req.OutPassphrase))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(st)
 }
@@ -202,7 +230,15 @@ func (s *server) handlePatchStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if err := req.validatePassphrases(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	st.UpdateSchedule(req.StartAt, req.StopAt, req.Recurrence, req.AutoRemove, req.Contact)
+	if _, err := st.SetPassphrases(req.InPassphrase, req.OutPassphrase); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.relay.PersistNow()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(st)
@@ -523,13 +559,37 @@ func (s *server) routes() http.Handler {
 	return mux
 }
 
-// handleStreamPath routes PATCH (edit) vs DELETE (remove) for /api/streams/{id}.
+// handleStreamPath routes GET /api/streams/{id}/secrets, PATCH (edit) and
+// DELETE (remove) for /api/streams/{id}. The route requires operator or admin.
 func (s *server) handleStreamPath(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/secrets") {
+		s.handleStreamSecrets(w, r)
+		return
+	}
 	if r.Method == http.MethodPatch {
 		s.handlePatchStream(w, r)
 		return
 	}
 	s.handleRemoveStream(w, r)
+}
+
+// handleStreamSecrets returns a stream's SRT passphrases. They are kept out
+// of the stream JSON (which viewers and the public view page receive).
+func (s *server) handleStreamSecrets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/streams/"), "/secrets")
+	st := s.relay.GetStream(id)
+	if st == nil {
+		http.Error(w, "stream not found", http.StatusNotFound)
+		return
+	}
+	in, out := st.Passphrases()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{"inPassphrase": in, "outPassphrase": out})
 }
 
 func generateStreamID(name string) string {
