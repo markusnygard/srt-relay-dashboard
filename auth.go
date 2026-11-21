@@ -116,20 +116,30 @@ func (a *authManager) listUsers() []PublicUser {
 	return out
 }
 
-// Roles. Users stored without a role (older users.json files) count as admin.
+// Roles, from most to least privileged:
+//   - admin:    everything, including user management
+//   - operator: add / edit / delete streams, no user management
+//   - viewer:   read only
+//
+// Users stored without a role (older users.json files) count as admin.
 const (
-	roleAdmin  = "admin"
-	roleViewer = "viewer"
+	roleAdmin    = "admin"
+	roleOperator = "operator"
+	roleViewer   = "viewer"
 )
 
 func normalizeRole(r string) string {
-	if r == roleViewer {
-		return roleViewer
+	switch r {
+	case roleViewer, roleOperator:
+		return r
 	}
 	return roleAdmin
 }
 
-func validRole(r string) bool { return r == roleAdmin || r == roleViewer }
+func validRole(r string) bool { return r == roleAdmin || r == roleOperator || r == roleViewer }
+
+// canManageStreams reports whether role may add, edit and delete streams.
+func canManageStreams(role string) bool { return role == roleAdmin || role == roleOperator }
 
 // userRole returns the current role of user, or "" if the user does not exist.
 // Looked up on every request so role changes take effect immediately.
@@ -292,7 +302,7 @@ var (
 	errCannotRemoveLast = &apiError{code: http.StatusBadRequest, msg: "cannot remove the last user"}
 	errLastAdmin        = &apiError{code: http.StatusBadRequest, msg: "at least one admin must remain"}
 	errProtectedAdmin   = &apiError{code: http.StatusBadRequest, msg: "the built-in admin user always stays admin"}
-	errBadRole          = &apiError{code: http.StatusBadRequest, msg: "role must be admin or viewer"}
+	errBadRole          = &apiError{code: http.StatusBadRequest, msg: "role must be admin, operator or viewer"}
 )
 
 type apiError struct {
@@ -351,12 +361,26 @@ func (a *authManager) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// requireAdmin is requireAuth plus a live role check: viewers get 403.
+// requireAdmin is requireAuth plus a live role check: only admins pass
+// (user management).
 func (a *authManager) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		username, _ := r.Context().Value(ctxUser).(string)
 		if a.userRole(username) != roleAdmin {
 			http.Error(w, "forbidden: admin role required", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})
+}
+
+// requireOperator lets admins and operators through (stream changes);
+// viewers get 403.
+func (a *authManager) requireOperator(next http.HandlerFunc) http.HandlerFunc {
+	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		username, _ := r.Context().Value(ctxUser).(string)
+		if !canManageStreams(a.userRole(username)) {
+			http.Error(w, "forbidden: operator or admin role required", http.StatusForbidden)
 			return
 		}
 		next(w, r)

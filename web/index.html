@@ -98,8 +98,11 @@
   .legend .lg .status-dot.live { background:var(--green); }
   .legend .lg .status-dot.idle { background:var(--gray); }
 
-  /* Viewer role: hide everything that changes state */
-  body.viewer .admin-only { display:none !important; }
+  /* Roles: viewers see no controls that change state; operators can change
+     streams but don't see user management. */
+  body.role-viewer .edit-only,
+  body.role-viewer .admin-only,
+  body.role-operator .admin-only { display:none !important; }
 
   /* Infoscreen view mode */
   body.view-mode { overflow:hidden; }
@@ -144,7 +147,7 @@
 
   <!-- Streams list tab -->
   <div id="viewStreams">
-    <div class="toolbar admin-only">
+    <div class="toolbar edit-only">
       <input id="nameInput" type="text" placeholder="Stream name (e.g. cam01)">
       <input id="contactInput" type="text" placeholder="Contact (optional)">
       <select id="portSelect"><option value="">Select ingress port…</option></select>
@@ -194,7 +197,7 @@
     <h2 id="modalTitle">Stream details</h2>
     <div id="modalBody"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-      <button class="ghost admin-only" onclick="editFromDetails()">Edit schedule</button>
+      <button class="ghost edit-only" onclick="editFromDetails()">Edit schedule</button>
     </div>
   </div>
 </div>
@@ -208,6 +211,7 @@
       <input id="newPass" type="text" placeholder="Password" style="flex:1;min-width:120px">
       <select id="newRole" title="Role">
         <option value="viewer">viewer (read only)</option>
+        <option value="operator">operator (streams)</option>
         <option value="admin">admin</option>
       </select>
       <button onclick="addUser()">New user</button>
@@ -270,12 +274,15 @@ let HOST = location.hostname || "localhost";
 let CURRENT_USER = null;
 let CURRENT_ROLE = "admin";
 let VIEW_MODE = location.pathname === "/view";
-function isAdmin(){ return !VIEW_MODE && CURRENT_ROLE === "admin"; }
+// admin: everything; operator: streams but not users; viewer: read only.
+function canEdit(){ return !VIEW_MODE && (CURRENT_ROLE === "admin" || CURRENT_ROLE === "operator"); }
 function setSession(me){
   CURRENT_USER = me ? me.user : null;
   CURRENT_ROLE = (me && me.role) || "admin";
-  document.body.classList.toggle("viewer", CURRENT_ROLE !== "admin");
+  document.body.classList.toggle("role-viewer", CURRENT_ROLE === "viewer");
+  document.body.classList.toggle("role-operator", CURRENT_ROLE === "operator");
 }
+const ROLE_NOTE = {viewer:" (read only)", operator:" (operator)"};
 let CONFIG = {};
 
 function el(id){ return document.getElementById(id); }
@@ -315,9 +322,9 @@ async function checkSession(){
 function showLogin(){ el("loginView").style.display="flex"; el("appView").style.display="none"; }
 function showApp(){
   el("loginView").style.display="none"; el("appView").style.display="block";
-  el("whoAmI").textContent = CURRENT_USER ? "Signed in as "+CURRENT_USER+(isAdmin() ? "" : " (read only)") : "";
+  el("whoAmI").textContent = CURRENT_USER ? "Signed in as "+CURRENT_USER+(ROLE_NOTE[CURRENT_ROLE]||"") : "";
   if(CONFIG.serverTimeZone) el("serverTz").textContent = "Server timezone: "+CONFIG.serverTimeZone;
-  loadConfig(); if(isAdmin()) loadPorts(); refresh(); connectWS(); populateTimeSelects();
+  loadConfig(); if(canEdit()) loadPorts(); refresh(); connectWS(); populateTimeSelects();
 }
 
 async function doLogin(){
@@ -490,7 +497,7 @@ function render(st){
   const hasIngress = !!st.ingressConnected;
   // Only show Details when there is an ingress; no ingress = no details.
   const detailsBtn = hasIngress ? `<button class="ghost" onclick="showDetails('${sid}')">Details</button> ` : "";
-  const editBtns = isAdmin() ? `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>` : "";
+  const editBtns = canEdit() ? `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>` : "";
   const actions = VIEW_MODE ? "" : detailsBtn + editBtns;
   return `<tr>
     <td>${dot}</td>
@@ -899,7 +906,7 @@ function isNowWithin(st, blk){
 }
 
 function openSchedule(idOrName, cellMs, hourStart){
-  if(!isAdmin()) return;
+  if(!canEdit()) return;
   let st = streams.find(s=>s.streamId===idOrName);
   el("scheduleTitle").textContent = st ? "Edit: "+st.name : "Schedule stream";
   el("schName").value = st ? st.name : "";
@@ -1013,6 +1020,7 @@ function renderUsers(){
       <td>
         <select onchange="setRole('${escapeHtml(u.user)}', this.value, this)" ${u.user==="admin" ? "disabled title=\"The built-in admin user always stays admin\"" : ""}>
           <option value="admin" ${u.role==="admin"?"selected":""}>admin</option>
+          <option value="operator" ${u.role==="operator"?"selected":""}>operator (streams)</option>
           <option value="viewer" ${u.role==="viewer"?"selected":""}>viewer (read only)</option>
         </select>
       </td>
@@ -1059,7 +1067,7 @@ async function setRole(user, role, selectEl){
       body: JSON.stringify({role})
     });
     renderUsers();
-    // Demoting yourself: switch the UI to read-only right away.
+    // Demoting yourself: switch the UI to the new role right away.
     if(user === CURRENT_USER && role !== "admin"){
       setSession({user, role}); closeUsers(); showApp();
     }

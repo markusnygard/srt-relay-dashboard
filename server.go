@@ -492,15 +492,15 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/logout", s.auth.requireAuth(s.handleLogout))
 	mux.HandleFunc("/api/me", s.auth.requireAuth(s.handleMe))
-	// Read-only endpoints: any signed-in user (admin or viewer).
-	// Everything that changes state requires the admin role.
+	// Read-only endpoints: any signed-in user. Stream changes need operator
+	// or admin; user management needs admin.
 	mux.HandleFunc("/api/users", s.auth.requireAdmin(s.handleListUsers))
 	mux.HandleFunc("/api/users/add", s.auth.requireAdmin(s.handleAddUser))
 	mux.HandleFunc("/api/users/", s.auth.requireAdmin(s.handleUserPath))
 	mux.HandleFunc("/api/config", s.auth.requireAuth(s.handleConfig))
 	mux.HandleFunc("/api/streams", s.auth.requireAuth(s.handleListStreams))
-	mux.HandleFunc("/api/streams/add", s.auth.requireAdmin(s.handleAddStream))
-	mux.HandleFunc("/api/streams/", s.auth.requireAdmin(s.handleStreamPath))
+	mux.HandleFunc("/api/streams/add", s.auth.requireOperator(s.handleAddStream))
+	mux.HandleFunc("/api/streams/", s.auth.requireOperator(s.handleStreamPath))
 	mux.HandleFunc("/api/ports/free", s.auth.requireAuth(s.handleFreePorts))
 	mux.Handle("/ws", s.auth.requireWS(s.handleWS))
 
