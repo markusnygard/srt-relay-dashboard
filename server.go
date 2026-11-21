@@ -329,7 +329,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	token := s.auth.createSession(req.User)
 	s.auth.setSessionCookie(w, token)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"user": req.User, "role": "admin"})
+	json.NewEncoder(w).Encode(map[string]string{"user": req.User, "role": s.auth.userRole(req.User)})
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -343,7 +343,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	username := r.Context().Value(ctxUser).(string)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"user": username, "role": "admin"})
+	json.NewEncoder(w).Encode(map[string]string{"user": username, "role": s.auth.userRole(username)})
 }
 
 // --- user management ---
@@ -351,6 +351,39 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 type addUserRequest struct {
 	User string `json:"user"`
 	Pass string `json:"pass"`
+	Role string `json:"role"`
+}
+
+// writeAPIError maps *apiError to its status code, anything else to 500.
+func writeAPIError(w http.ResponseWriter, err error, fallback string) {
+	if ae, ok := err.(*apiError); ok {
+		http.Error(w, ae.msg, ae.code)
+		return
+	}
+	http.Error(w, fallback, http.StatusInternalServerError)
+}
+
+func (s *server) handleSetRole(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/users/"), "/role")
+	if user == "" {
+		http.Error(w, "user required", http.StatusBadRequest)
+		return
+	}
+	var req addUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := s.auth.setRole(user, req.Role); err != nil {
+		writeAPIError(w, err, "failed to set role")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.auth.listUsers())
 }
 
 func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -372,15 +405,15 @@ func (s *server) handleAddUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user and pass required", http.StatusBadRequest)
 		return
 	}
-	err := s.auth.addUser(req.User, req.Pass)
-	if ae, ok := err.(*apiError); ok && ae.code == http.StatusConflict {
-		// User exists: treat as password change.
+	err := s.auth.addUser(req.User, req.Pass, req.Role)
+	if err == errUserExists {
+		// User exists: treat as password change (role is left as it is).
 		if err := s.auth.setPassword(req.User, req.Pass); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeAPIError(w, err, "failed to set password")
 			return
 		}
 	} else if err != nil {
-		http.Error(w, "failed to add user", http.StatusInternalServerError)
+		writeAPIError(w, err, "failed to add user")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -447,6 +480,8 @@ func (s *server) handleUserPath(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(path, "/password"):
 		s.handleSetPassword(w, r)
+	case strings.HasSuffix(path, "/role"):
+		s.handleSetRole(w, r)
 	default:
 		s.handleRemoveUser(w, r)
 	}
@@ -457,13 +492,15 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/logout", s.auth.requireAuth(s.handleLogout))
 	mux.HandleFunc("/api/me", s.auth.requireAuth(s.handleMe))
-	mux.HandleFunc("/api/users", s.auth.requireAuth(s.handleListUsers))
-	mux.HandleFunc("/api/users/add", s.auth.requireAuth(s.handleAddUser))
-	mux.HandleFunc("/api/users/", s.auth.requireAuth(s.handleUserPath))
+	// Read-only endpoints: any signed-in user (admin or viewer).
+	// Everything that changes state requires the admin role.
+	mux.HandleFunc("/api/users", s.auth.requireAdmin(s.handleListUsers))
+	mux.HandleFunc("/api/users/add", s.auth.requireAdmin(s.handleAddUser))
+	mux.HandleFunc("/api/users/", s.auth.requireAdmin(s.handleUserPath))
 	mux.HandleFunc("/api/config", s.auth.requireAuth(s.handleConfig))
 	mux.HandleFunc("/api/streams", s.auth.requireAuth(s.handleListStreams))
-	mux.HandleFunc("/api/streams/add", s.auth.requireAuth(s.handleAddStream))
-	mux.HandleFunc("/api/streams/", s.auth.requireAuth(s.handleStreamPath))
+	mux.HandleFunc("/api/streams/add", s.auth.requireAdmin(s.handleAddStream))
+	mux.HandleFunc("/api/streams/", s.auth.requireAdmin(s.handleStreamPath))
 	mux.HandleFunc("/api/ports/free", s.auth.requireAuth(s.handleFreePorts))
 	mux.Handle("/ws", s.auth.requireWS(s.handleWS))
 

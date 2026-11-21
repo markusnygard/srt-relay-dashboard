@@ -110,13 +110,85 @@ func (a *authManager) listUsers() []PublicUser {
 	defer a.mu.Unlock()
 	out := make([]PublicUser, 0, len(a.users))
 	for _, u := range a.users {
-		out = append(out, PublicUser{User: u.User, Role: u.Role})
+		out = append(out, PublicUser{User: u.User, Role: normalizeRole(u.Role)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].User < out[j].User })
 	return out
 }
 
-func (a *authManager) addUser(user, pass string) error {
+// Roles. Users stored without a role (older users.json files) count as admin.
+const (
+	roleAdmin  = "admin"
+	roleViewer = "viewer"
+)
+
+func normalizeRole(r string) string {
+	if r == roleViewer {
+		return roleViewer
+	}
+	return roleAdmin
+}
+
+func validRole(r string) bool { return r == roleAdmin || r == roleViewer }
+
+// userRole returns the current role of user, or "" if the user does not exist.
+// Looked up on every request so role changes take effect immediately.
+func (a *authManager) userRole(user string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, u := range a.users {
+		if u.User == user {
+			return normalizeRole(u.Role)
+		}
+	}
+	return ""
+}
+
+// adminCountLocked counts admins; caller holds a.mu.
+func (a *authManager) adminCountLocked() int {
+	n := 0
+	for _, u := range a.users {
+		if normalizeRole(u.Role) == roleAdmin {
+			n++
+		}
+	}
+	return n
+}
+
+// setRole changes a user's role. The built-in "admin" user and the last
+// remaining admin can never be demoted, so nobody can lock themselves out.
+func (a *authManager) setRole(user, role string) error {
+	if !validRole(role) {
+		return errBadRole
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i := range a.users {
+		if a.users[i].User != user {
+			continue
+		}
+		cur := normalizeRole(a.users[i].Role)
+		if cur == roleAdmin && role != roleAdmin {
+			if user == "admin" {
+				return errProtectedAdmin
+			}
+			if a.adminCountLocked() <= 1 {
+				return errLastAdmin
+			}
+		}
+		a.users[i].Role = role
+		return a.saveLocked()
+	}
+	return errUserNotFound
+}
+
+func (a *authManager) addUser(user, pass, role string) error {
+	if role == "" {
+		role = roleAdmin
+	}
+	if !validRole(role) {
+		return errBadRole
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, u := range a.users {
@@ -124,7 +196,7 @@ func (a *authManager) addUser(user, pass string) error {
 			return errUserExists
 		}
 	}
-	nu := User{User: user, Role: "admin"}
+	nu := User{User: user, Role: role}
 	if err := hashUserPass(&nu, pass); err != nil {
 		return err
 	}
@@ -154,6 +226,9 @@ func (a *authManager) removeUser(user string) error {
 	}
 	for i, u := range a.users {
 		if u.User == user {
+			if normalizeRole(u.Role) == roleAdmin && a.adminCountLocked() <= 1 {
+				return errLastAdmin
+			}
 			a.users = append(a.users[:i], a.users[i+1:]...)
 			for tok, un := range a.sessions {
 				if un == user {
@@ -215,6 +290,9 @@ var (
 	errUserExists       = &apiError{code: http.StatusConflict, msg: "user already exists"}
 	errUserNotFound     = &apiError{code: http.StatusNotFound, msg: "user not found"}
 	errCannotRemoveLast = &apiError{code: http.StatusBadRequest, msg: "cannot remove the last user"}
+	errLastAdmin        = &apiError{code: http.StatusBadRequest, msg: "at least one admin must remain"}
+	errProtectedAdmin   = &apiError{code: http.StatusBadRequest, msg: "the built-in admin user always stays admin"}
+	errBadRole          = &apiError{code: http.StatusBadRequest, msg: "role must be admin or viewer"}
 )
 
 type apiError struct {
@@ -271,6 +349,18 @@ func (a *authManager) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		ctx := context.WithValue(r.Context(), ctxUser, username)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// requireAdmin is requireAuth plus a live role check: viewers get 403.
+func (a *authManager) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		username, _ := r.Context().Value(ctxUser).(string)
+		if a.userRole(username) != roleAdmin {
+			http.Error(w, "forbidden: admin role required", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})
 }
 
 // requireWS wraps a websocket handler, rejecting unauthenticated handshakes.

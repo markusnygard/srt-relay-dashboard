@@ -96,6 +96,9 @@
   .legend .lg .status-dot.live { background:var(--green); }
   .legend .lg .status-dot.idle { background:var(--gray); }
 
+  /* Viewer role: hide everything that changes state */
+  body.viewer .admin-only { display:none !important; }
+
   /* Infoscreen view mode */
   body.view-mode { overflow:hidden; }
   body.view-mode .topbar,
@@ -126,7 +129,7 @@
   <div class="topbar">
     <span id="whoAmI" style="color:var(--muted);font-size:14px;margin-right:auto"></span>
     <span id="serverTz" style="color:var(--muted);font-size:12px"></span>
-    <button class="ghost" onclick="openUsers()">Users</button>
+    <button class="ghost admin-only" onclick="openUsers()">Users</button>
     <button class="ghost" onclick="doLogout()">Log out</button>
   </div>
   <h1>SRT Relay Dashboard</h1>
@@ -139,7 +142,7 @@
 
   <!-- Streams list tab -->
   <div id="viewStreams">
-    <div class="toolbar">
+    <div class="toolbar admin-only">
       <input id="nameInput" type="text" placeholder="Stream name (e.g. cam01)">
       <input id="contactInput" type="text" placeholder="Contact (optional)">
       <select id="portSelect"><option value="">Select ingress port…</option></select>
@@ -189,7 +192,7 @@
     <h2 id="modalTitle">Stream details</h2>
     <div id="modalBody"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-      <button class="ghost" onclick="editFromDetails()">Edit schedule</button>
+      <button class="ghost admin-only" onclick="editFromDetails()">Edit schedule</button>
     </div>
   </div>
 </div>
@@ -201,6 +204,10 @@
     <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
       <input id="newUser" type="text" placeholder="Username" style="flex:1;min-width:120px">
       <input id="newPass" type="text" placeholder="Password" style="flex:1;min-width:120px">
+      <select id="newRole" title="Role">
+        <option value="viewer">viewer (read only)</option>
+        <option value="admin">admin</option>
+      </select>
       <button onclick="addUser()">New user</button>
     </div>
     <table>
@@ -259,7 +266,14 @@
 <script>
 let HOST = location.hostname || "localhost";
 let CURRENT_USER = null;
+let CURRENT_ROLE = "admin";
 let VIEW_MODE = location.pathname === "/view";
+function isAdmin(){ return !VIEW_MODE && CURRENT_ROLE === "admin"; }
+function setSession(me){
+  CURRENT_USER = me ? me.user : null;
+  CURRENT_ROLE = (me && me.role) || "admin";
+  document.body.classList.toggle("viewer", CURRENT_ROLE !== "admin");
+}
 let CONFIG = {};
 
 function el(id){ return document.getElementById(id); }
@@ -289,7 +303,7 @@ async function checkSession(){
   if(VIEW_MODE) return; // view page is public
   try {
     const me = await api("/api/me");
-    CURRENT_USER = me.user;
+    setSession(me);
     showApp();
   } catch (e) {
     showLogin();
@@ -299,9 +313,9 @@ async function checkSession(){
 function showLogin(){ el("loginView").style.display="flex"; el("appView").style.display="none"; }
 function showApp(){
   el("loginView").style.display="none"; el("appView").style.display="block";
-  el("whoAmI").textContent = CURRENT_USER ? "Signed in as "+CURRENT_USER : "";
+  el("whoAmI").textContent = CURRENT_USER ? "Signed in as "+CURRENT_USER+(isAdmin() ? "" : " (read only)") : "";
   if(CONFIG.serverTimeZone) el("serverTz").textContent = "Server timezone: "+CONFIG.serverTimeZone;
-  loadConfig(); loadPorts(); refresh(); connectWS(); populateTimeSelects();
+  loadConfig(); if(isAdmin()) loadPorts(); refresh(); connectWS(); populateTimeSelects();
 }
 
 async function doLogin(){
@@ -313,14 +327,14 @@ async function doLogin(){
   });
   if(!r.ok){ el("loginError").textContent = "Invalid username or password"; return; }
   const me = await r.json();
-  CURRENT_USER = me.user;
+  setSession(me);
   el("loginUser").value=""; el("loginPass").value="";
   showApp();
 }
 
 async function doLogout(){
   await loginApi("/api/logout", {method:"POST"});
-  CURRENT_USER = null;
+  setSession(null);
   showLogin();
 }
 
@@ -474,9 +488,9 @@ function render(st){
   const timeCell = `<span class="state${md?" multiday-time":""}">${schedTime(st)}</span>${md?' <span class="badge multiday">multiday</span>':''}`;
   const hasIngress = !!st.ingressConnected;
   // Only show Details when there is an ingress; no ingress = no details.
-  const actions = VIEW_MODE ? "" : (hasIngress
-    ? `<button class="ghost" onclick="showDetails('${sid}')">Details</button> <button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`
-    : `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>`);
+  const detailsBtn = hasIngress ? `<button class="ghost" onclick="showDetails('${sid}')">Details</button> ` : "";
+  const editBtns = isAdmin() ? `<button class="ghost" onclick="openSchedule('${sid}')">Schedule</button> <button class="ghost" onclick="removeStream('${sid}')">✕</button>` : "";
+  const actions = VIEW_MODE ? "" : detailsBtn + editBtns;
   return `<tr>
     <td>${dot}</td>
     <td>${timeCell}</td>
@@ -848,7 +862,7 @@ function isNowWithin(st, blk){
 }
 
 function openSchedule(idOrName, cellMs, hourStart){
-  if(VIEW_MODE) return;
+  if(!isAdmin()) return;
   let st = streams.find(s=>s.streamId===idOrName);
   el("scheduleTitle").textContent = st ? "Edit: "+st.name : "Schedule stream";
   el("schName").value = st ? st.name : "";
@@ -959,7 +973,12 @@ function renderUsers(){
     <tr>
       <td><b>${escapeHtml(u.user)}</b></td>
       <td><span class="pw">••••••</span></td>
-      <td>${escapeHtml(u.role||"admin")}</td>
+      <td>
+        <select onchange="setRole('${escapeHtml(u.user)}', this.value, this)" ${u.user==="admin" ? "disabled title=\"The built-in admin user always stays admin\"" : ""}>
+          <option value="admin" ${u.role==="admin"?"selected":""}>admin</option>
+          <option value="viewer" ${u.role==="viewer"?"selected":""}>viewer (read only)</option>
+        </select>
+      </td>
       <td style="text-align:right">
         <button class="ghost" onclick="resetPw('${escapeHtml(u.user)}')">🔑</button>
         <button class="ghost danger" onclick="removeUser('${escapeHtml(u.user)}')">🗑</button>
@@ -988,11 +1007,26 @@ async function addUser(){
     users = await api("/api/users/add", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({user: u, pass: p})
+      body: JSON.stringify({user: u, pass: p, role: el("newRole").value})
     });
     el("newUser").value=""; el("newPass").value="";
     renderUsers();
   } catch(e){ alert(e.message); }
+}
+
+async function setRole(user, role, selectEl){
+  try {
+    users = await api("/api/users/"+encodeURIComponent(user)+"/role", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({role})
+    });
+    renderUsers();
+    // Demoting yourself: switch the UI to read-only right away.
+    if(user === CURRENT_USER && role !== "admin"){
+      setSession({user, role}); closeUsers(); showApp();
+    }
+  } catch(e){ alert(e.message); renderUsers(); }
 }
 
 async function removeUser(user){
